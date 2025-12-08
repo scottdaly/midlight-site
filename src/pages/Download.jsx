@@ -90,10 +90,13 @@ function Download() {
                 <AppleIcon />
               </div>
               <h2>macOS</h2>
-              <p className="version">Version 0.0.1</p>
-              <button className="btn-primary download-btn">
+              <p className="version">Version 0.0.5</p>
+              <a
+                href="https://midlight.ai/releases/Midlight-0.0.5-arm64.dmg"
+                className="btn-primary download-btn"
+              >
                 Download for Mac
-              </button>
+              </a>
               <div className="system-requirements">
                 <h4>System Requirements</h4>
                 <ul>
@@ -111,10 +114,13 @@ function Download() {
                 <WindowsIcon />
               </div>
               <h2>Windows</h2>
-              <p className="version">Version 0.0.1</p>
-              <button className="btn-primary download-btn">
+              <p className="version">Version 0.0.5</p>
+              <a
+                href="https://midlight.ai/releases/Midlight%20Setup%200.0.5.exe"
+                className="btn-primary download-btn"
+              >
                 Download for Windows
-              </button>
+              </a>
               <div className="system-requirements">
                 <h4>System Requirements</h4>
                 <ul>
