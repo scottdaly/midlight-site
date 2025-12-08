@@ -64,6 +64,27 @@ const CursorIcon = () => (
 );
 
 function Download() {
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('https://midlight.ai/releases/version.json')
+      .then(res => res.json())
+      .then(data => {
+        setVersionInfo(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to fetch version info:', err);
+        setLoading(false);
+      });
+  }, []);
+
+  const version = versionInfo?.version || '0.0.5';
+  const macDownload = versionInfo?.downloads?.mac?.dmg || `https://midlight.ai/releases/Midlight-${version}-arm64.dmg`;
+  const winDownload = versionInfo?.downloads?.windows?.exe ||
+`https://midlight.ai/releases/Midlight%20Setup%20${version}.exe`;
+
   return (
     <div className="app">
       {/* Navigation */}
@@ -90,9 +111,9 @@ function Download() {
                 <AppleIcon />
               </div>
               <h2>macOS</h2>
-              <p className="version">Version 0.0.5</p>
+              <p className="version">Version {loading ? '...' : version}</p>
               <a
-                href="https://midlight.ai/releases/Midlight-0.0.5-arm64.dmg"
+                href={macDownload}
                 className="btn-primary download-btn"
               >
                 Download for Mac
@@ -114,9 +135,9 @@ function Download() {
                 <WindowsIcon />
               </div>
               <h2>Windows</h2>
-              <p className="version">Version 0.0.5</p>
+              <p className="version">Version {loading ? '...' : version}</p>
               <a
-                href="https://midlight.ai/releases/Midlight%20Setup%200.0.5.exe"
+                href={winDownload}
                 className="btn-primary download-btn"
               >
                 Download for Windows
