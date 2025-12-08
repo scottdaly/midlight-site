@@ -447,6 +447,13 @@ nav {
   }
 }
 
+/* App Wrapper */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
 /* Download Page */
 .download-hero {
   text-align: center;
@@ -603,6 +610,7 @@ nav {
 
 /* Footer */
 .footer {
+  margin-top: auto;
   padding: 4rem 0;
   border-top: 1px solid var(--footer-border);
   text-align: center;
