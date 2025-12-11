@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -5,6 +6,10 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import reportsRouter from './routes/reports.js';
+
+// Safe Debug Logging (Check if env vars are loaded)
+console.log(`[DEBUG] Admin user loaded: ${process.env.ADMIN_USER ? 'Yes' : 'No'}`);
+console.log(`[DEBUG] Admin pass loaded: ${process.env.ADMIN_PASS ? 'Yes' : 'No'}`);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
