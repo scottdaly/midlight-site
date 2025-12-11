@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { ThemeProvider } from './ThemeContext';
 import Download from './pages/Download';
+import AdminErrors from './pages/AdminErrors';
 import Footer from './components/Footer';
 
 // Simple Icon Components (SVG)
@@ -170,6 +171,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/download" element={<Download />} />
+          <Route path="/admin/errors" element={<AdminErrors />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>
