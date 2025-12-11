@@ -617,3 +617,27 @@ nav {
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+/* Form Inputs */
+.form-input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  font-family: var(--font-main);
+  font-size: 1rem;
+  color: var(--text-main);
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--text-muted);
+  background-color: var(--card-hover-bg);
+}
+
+.form-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}

@@ -59,17 +59,17 @@ const AdminErrors = () => {
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '2rem' }}>
           <input
             type="text"
+            className="form-input"
             placeholder="Username"
             value={creds.username}
             onChange={e => setCreds({...creds, username: e.target.value})}
-            style={{ padding: '0.5rem' }}
           />
           <input
             type="password"
+            className="form-input"
             placeholder="Password"
             value={creds.password}
             onChange={e => setCreds({...creds, password: e.target.value})}
-            style={{ padding: '0.5rem' }}
           />
           <button type="submit" className="btn-primary">Login</button>
         </form>
