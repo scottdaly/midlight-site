@@ -16,7 +16,15 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1); 
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      "script-src": ["'self'", "https://static.cloudflareinsights.com"],
+      "connect-src": ["'self'", "https://cloudflareinsights.com"],
+    },
+  },
+}));
 app.use(cors()); // Configure origin in production if needed
 app.use(express.json());
 
@@ -44,6 +52,13 @@ const basicAuth = (req, res, next) => {
   // TODO: Use environment variables for credentials in production
   const ADMIN_USER = process.env.ADMIN_USER || 'admin';
   const ADMIN_PASS = process.env.ADMIN_PASS || 'midlight_secret';
+
+  // DEBUG LOGGING (Remove in production!)
+  console.log('--- Auth Debug ---');
+  console.log('Received:', user, pass);
+  console.log('Expected:', ADMIN_USER, ADMIN_PASS);
+  console.log('Match?', user === ADMIN_USER && pass === ADMIN_PASS);
+  console.log('------------------');
 
   if (user === ADMIN_USER && pass === ADMIN_PASS) {
     next();
