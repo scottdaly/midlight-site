@@ -89,76 +89,71 @@ const AdminErrors = () => {
       
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+          <div className="admin-stats-grid">
             {data.stats.map(s => (
-              <div key={s.category} style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '8px' }}>
+              <div key={s.category} className="admin-stat-card">
                 <h3>{s.category}</h3>
-                <p style={{ fontSize: '2rem', fontWeight: 'bold' }}>{s.count}</p>
+                <p style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--text-main)' }}>{s.count}</p>
               </div>
             ))}
           </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+          <table className="admin-table">
             <thead>
-              <tr style={{ borderBottom: '2px solid #333', textAlign: 'left' }}>
-                <th style={{ padding: '0.5rem' }}>Time</th>
-                <th style={{ padding: '0.5rem' }}>Category</th>
-                <th style={{ padding: '0.5rem' }}>Type</th>
-                <th style={{ padding: '0.5rem' }}>Message</th>
-                <th style={{ padding: '0.5rem' }}>Platform</th>
-                <th style={{ padding: '0.5rem' }}>Version</th>
-                <th style={{ padding: '0.5rem' }}></th>
+              <tr>
+                <th>Time</th>
+                <th>Category</th>
+                <th>Type</th>
+                <th>Message</th>
+                <th>Platform</th>
+                <th>Version</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {data.reports.map(report => (
                 <React.Fragment key={report.id}>
                   <tr 
-                    style={{ borderBottom: expandedRow === report.id ? 'none' : '1px solid #eee', cursor: 'pointer', background: expandedRow === report.id ? '#f9f9f9' : 'transparent' }}
+                    className={`admin-row ${expandedRow === report.id ? 'expanded' : ''}`}
                     onClick={() => toggleRow(report.id)}
                   >
-                    <td style={{ padding: '0.5rem' }}>{new Date(report.received_at).toLocaleString()}</td>
-                    <td style={{ padding: '0.5rem' }}>
-                      <span style={{ 
-                        padding: '0.2rem 0.5rem', 
-                        borderRadius: '4px', 
-                        background: report.category === 'crash' ? '#ffcccc' : '#e0e0e0',
-                        color: report.category === 'crash' ? '#990000' : '#333'
-                      }}>
+                    <td>{new Date(report.received_at).toLocaleString()}</td>
+                    <td>
+                      <span className={`admin-badge ${report.category === 'crash' ? 'crash' : ''}`}>
                         {report.category}
                       </span>
                     </td>
-                    <td style={{ padding: '0.5rem' }}>{report.error_type}</td>
-                    <td style={{ padding: '0.5rem', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td>{report.error_type}</td>
+                    <td style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {report.message}
                     </td>
-                    <td style={{ padding: '0.5rem' }}>{report.platform} / {report.os_version}</td>
-                    <td style={{ padding: '0.5rem' }}>{report.app_version}</td>
-                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>
+                    <td>{report.platform} / {report.os_version}</td>
+                    <td>{report.app_version}</td>
+                    <td style={{ textAlign: 'right' }}>
                       {expandedRow === report.id ? '▼' : '▶'}
                     </td>
                   </tr>
                   {expandedRow === report.id && (
-                    <tr style={{ borderBottom: '1px solid #eee', background: '#f9f9f9' }}>
+                    <tr className="admin-details-row">
                       <td colSpan="7" style={{ padding: '1rem' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                           <div>
                             <strong>Full Message:</strong>
-                            <pre style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem', background: '#fff', padding: '0.5rem', border: '1px solid #ddd', borderRadius: '4px' }}>
+                            <pre className="admin-pre">
                               {report.message}
                             </pre>
                           </div>
                           <div>
                             <strong>Context:</strong>
                             {Object.keys(report.context).length > 0 ? (
-                              <pre style={{ whiteSpace: 'pre-wrap', marginTop: '0.5rem', background: '#fff', padding: '0.5rem', border: '1px solid #ddd', borderRadius: '4px', overflowX: 'auto' }}>
+                              <pre className="admin-pre">
                                 {JSON.stringify(report.context, null, 2)}
                               </pre>
                             ) : (
-                              <p style={{ fontStyle: 'italic', color: '#666' }}>No additional context</p>
+                              <p style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>No additional context</p>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                             <strong>Session ID:</strong> {report.session_id} | <strong>Arch:</strong> {report.arch}
                           </div>
                         </div>
