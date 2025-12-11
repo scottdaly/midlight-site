@@ -53,13 +53,6 @@ const basicAuth = (req, res, next) => {
   const ADMIN_USER = process.env.ADMIN_USER || 'admin';
   const ADMIN_PASS = process.env.ADMIN_PASS || 'midlight_secret';
 
-  // DEBUG LOGGING (Remove in production!)
-  console.log('--- Auth Debug ---');
-  console.log('Received:', user, pass);
-  console.log('Expected:', ADMIN_USER, ADMIN_PASS);
-  console.log('Match?', user === ADMIN_USER && pass === ADMIN_PASS);
-  console.log('------------------');
-
   if (user === ADMIN_USER && pass === ADMIN_PASS) {
     next();
   } else {
