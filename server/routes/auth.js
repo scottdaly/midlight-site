@@ -203,8 +203,10 @@ router.post('/logout', (req, res) => {
 // GET /api/auth/google - Initiate Google OAuth
 router.get('/google', (req, res, next) => {
   const isDesktop = req.query.desktop === 'true';
+  // Dev mode: accept callback_port for local HTTP server callback (avoids protocol conflicts)
+  const devCallbackPort = req.query.callback_port ? parseInt(req.query.callback_port, 10) : null;
   // Use cryptographically secure state instead of predictable 'desktop'/'web'
-  const state = generateOAuthState(isDesktop);
+  const state = generateOAuthState(isDesktop, devCallbackPort);
 
   passport.authenticate('google', {
     scope: ['profile', 'email'],
@@ -225,6 +227,10 @@ router.get('/google/callback', (req, res, next) => {
     if (err || !user) {
       console.error('Google auth error:', err);
       if (stateData.isDesktop) {
+        // Dev mode: redirect to local HTTP server
+        if (stateData.devCallbackPort) {
+          return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?error=auth_failed`);
+        }
         return res.redirect(`${DESKTOP_REDIRECT_BASE}?error=auth_failed`);
       }
       return res.redirect(`${WEB_REDIRECT_BASE}/login?error=auth_failed`);
@@ -237,6 +243,10 @@ router.get('/google/callback', (req, res, next) => {
     if (stateData.isDesktop) {
       // Desktop: use one-time exchange code instead of exposing tokens in URL
       const code = generateExchangeCode(user.id, tokens);
+      // Dev mode: redirect to local HTTP server instead of protocol handler
+      if (stateData.devCallbackPort) {
+        return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?code=${code}`);
+      }
       return res.redirect(`${DESKTOP_REDIRECT_BASE}?code=${code}`);
     }
 
@@ -249,8 +259,10 @@ router.get('/google/callback', (req, res, next) => {
 // GET /api/auth/github - Initiate GitHub OAuth
 router.get('/github', (req, res, next) => {
   const isDesktop = req.query.desktop === 'true';
+  // Dev mode: accept callback_port for local HTTP server callback (avoids protocol conflicts)
+  const devCallbackPort = req.query.callback_port ? parseInt(req.query.callback_port, 10) : null;
   // Use cryptographically secure state instead of predictable 'desktop'/'web'
-  const state = generateOAuthState(isDesktop);
+  const state = generateOAuthState(isDesktop, devCallbackPort);
 
   passport.authenticate('github', {
     scope: ['user:email'],
@@ -271,6 +283,10 @@ router.get('/github/callback', (req, res, next) => {
     if (err || !user) {
       console.error('GitHub auth error:', err);
       if (stateData.isDesktop) {
+        // Dev mode: redirect to local HTTP server
+        if (stateData.devCallbackPort) {
+          return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?error=auth_failed`);
+        }
         return res.redirect(`${DESKTOP_REDIRECT_BASE}?error=auth_failed`);
       }
       return res.redirect(`${WEB_REDIRECT_BASE}/login?error=auth_failed`);
@@ -283,6 +299,10 @@ router.get('/github/callback', (req, res, next) => {
     if (stateData.isDesktop) {
       // Desktop: use one-time exchange code instead of exposing tokens in URL
       const code = generateExchangeCode(user.id, tokens);
+      // Dev mode: redirect to local HTTP server instead of protocol handler
+      if (stateData.devCallbackPort) {
+        return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?code=${code}`);
+      }
       return res.redirect(`${DESKTOP_REDIRECT_BASE}?code=${code}`);
     }
 

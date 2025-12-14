@@ -178,13 +178,15 @@ const OAUTH_STATE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Generate a secure OAuth state token
  * @param {boolean} isDesktop - Whether this is a desktop app OAuth flow
+ * @param {number|null} devCallbackPort - Port for dev mode HTTP callback (null for production/protocol)
  * @returns {string} - The state token
  */
-export function generateOAuthState(isDesktop) {
+export function generateOAuthState(isDesktop, devCallbackPort = null) {
   const state = crypto.randomBytes(32).toString('hex');
 
   pendingOAuthStates.set(state, {
     isDesktop,
+    devCallbackPort,
     createdAt: Date.now()
   });
 
