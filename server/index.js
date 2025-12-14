@@ -3,9 +3,18 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
+import csrf from 'csurf';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import passport from 'passport';
 import reportsRouter from './routes/reports.js';
+import authRouter from './routes/auth.js';
+import userRouter from './routes/user.js';
+import llmRouter from './routes/llm.js';
+import { configurePassport } from './config/passport.js';
+import { cleanupExpiredSessions } from './services/tokenService.js';
+import { getProviderStatus } from './services/llm/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,8 +22,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Configure Passport for OAuth
+configurePassport();
+
 // Trust proxy (required for correct IP behind Nginx/Caddy)
-app.set('trust proxy', 1); 
+app.set('trust proxy', 1);
+
+// CORS configuration
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:3000'],
+  credentials: true, // Allow cookies
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token']
+};
 
 // Middleware
 app.use(helmet({
@@ -26,8 +46,53 @@ app.use(helmet({
     },
   },
 }));
-app.use(cors()); // Configure origin in production if needed
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(cookieParser());
+app.use(passport.initialize());
+
+// CSRF Protection
+// Desktop app is exempt (identified by X-Client-Type header)
+// Web clients must include CSRF token in requests
+const csrfProtection = csrf({
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  }
+});
+
+// Middleware to conditionally apply CSRF protection
+const conditionalCsrf = (req, res, next) => {
+  // Exempt desktop clients (they use bearer tokens, not cookies for auth)
+  if (req.headers['x-client-type'] === 'desktop') {
+    return next();
+  }
+  // Exempt GET, HEAD, OPTIONS (safe methods)
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  // Apply CSRF protection for web clients on state-changing requests
+  csrfProtection(req, res, next);
+};
+
+// Apply conditional CSRF to auth and user routes
+app.use('/api/auth', conditionalCsrf);
+app.use('/api/user', conditionalCsrf);
+app.use('/api/llm', conditionalCsrf);
+
+// CSRF token endpoint for web clients
+app.get('/api/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+// CSRF error handler
+app.use((err, req, res, next) => {
+  if (err.code === 'EBADCSRFTOKEN') {
+    return res.status(403).json({ error: 'Invalid or missing CSRF token' });
+  }
+  next(err);
+});
 
 // Rate Limiter for Submission Endpoint
 const submissionLimiter = rateLimit({
@@ -75,12 +140,33 @@ app.use('/api', (req, res, next) => {
 // Admin protection
 app.use('/api/admin', basicAuth);
 
+// API Routes
 app.use('/api', reportsRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/user', userRouter);
+app.use('/api/llm', llmRouter);
 
 // Serve static files from frontend in production (optional, if not using Nginx for static)
 // Since the prompt mentions Nginx will proxy /api -> localhost:3001, we might not need to serve static here.
 // But it's good practice for a standalone test.
 
+// Cleanup expired sessions periodically (every hour)
+setInterval(() => {
+  try {
+    const result = cleanupExpiredSessions();
+    if (result.changes > 0) {
+      console.log(`Cleaned up ${result.changes} expired sessions`);
+    }
+  } catch (error) {
+    console.error('Session cleanup error:', error);
+  }
+}, 60 * 60 * 1000);
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  // Log LLM provider status
+  const providers = getProviderStatus();
+  console.log(`LLM Providers: OpenAI ${providers.openai ? '✓' : '✗'}, Anthropic ${providers.anthropic ? '✓' : '✗'}`);
 });
