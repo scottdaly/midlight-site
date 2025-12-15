@@ -34,85 +34,118 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>Authentication ${success ? 'Successful' : 'Failed'}</title>
+        <title>${success ? 'Opening Midlight...' : 'Authentication Failed'} - Midlight</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
           body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #eee;
+            background: #050505;
+            color: #ededed;
             padding: 20px;
           }
-          .container {
+          .card {
             text-align: center;
-            max-width: 400px;
+            max-width: 420px;
+            padding: 3rem 2.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
           }
-          .icon {
-            width: 64px;
-            height: 64px;
-            margin-bottom: 24px;
+          .logo {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1.5rem;
+            opacity: 0.9;
           }
-          .icon-success { color: #4ade80; }
-          .icon-error { color: #f87171; }
+          .spinner {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1.5rem;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #ededed;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+          .icon-error {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1.5rem;
+            color: #f87171;
+          }
           h1 {
-            font-size: 24px;
-            margin-bottom: 12px;
-            color: ${success ? '#4ade80' : '#f87171'};
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.75rem;
+            color: #ededed;
           }
           p {
-            color: #aaa;
-            margin-bottom: 24px;
-            line-height: 1.5;
+            color: #888888;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+            font-size: 1rem;
           }
           .btn {
             display: inline-block;
-            padding: 12px 24px;
-            background: #3b82f6;
-            color: white;
+            padding: 1rem 2rem;
+            background: #f2f2f2;
+            color: #050505;
             text-decoration: none;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: background 0.2s;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
           }
-          .btn:hover { background: #2563eb; }
-          .auto-close {
-            margin-top: 16px;
-            font-size: 14px;
-            color: #666;
+          .btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.15);
+          }
+          .status {
+            margin-top: 1.5rem;
+            font-size: 0.875rem;
+            color: #666666;
+          }
+          .status.opening {
+            color: #888888;
           }
         </style>
       </head>
       <body>
-        <div class="container">
+        <div class="card">
           ${success ? `
-            <svg class="icon icon-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
-            <h1>Authentication Successful!</h1>
-            <p>You've been signed in to Midlight. You can close this tab and return to the app.</p>
+            <div class="spinner"></div>
+            <h1>Opening Midlight...</h1>
+            <p>You've signed in successfully. The app should open automatically.</p>
+            <a href="${protocolUrl}" class="btn">Open Midlight</a>
+            <p class="status opening">Didn't work? Click the button above.</p>
           ` : `
-            <svg class="icon icon-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="icon-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
             <h1>Authentication Failed</h1>
-            <p>Something went wrong during sign in. Please close this tab and try again.</p>
+            <p>Something went wrong during sign in. Please close this tab and try again in the app.</p>
+            <a href="${protocolUrl}" class="btn">Back to Midlight</a>
           `}
-          <a href="${protocolUrl}" class="btn">Open Midlight</a>
-          <p class="auto-close">This tab will attempt to close automatically...</p>
         </div>
         <script>
-          // Open the protocol handler
+          // Immediately try to open the protocol handler
           window.location.href = '${protocolUrl}';
 
-          // Try to close this tab after a short delay
+          // Try to close this tab after a delay (gives time for protocol to launch)
           setTimeout(function() {
             window.close();
-          }, 1500);
+          }, 2000);
         </script>
       </body>
     </html>
