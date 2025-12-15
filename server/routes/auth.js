@@ -59,24 +59,6 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 16px;
           }
-          .logo {
-            width: 48px;
-            height: 48px;
-            margin: 0 auto 1.5rem;
-            opacity: 0.9;
-          }
-          .spinner {
-            width: 48px;
-            height: 48px;
-            margin: 0 auto 1.5rem;
-            border: 3px solid rgba(255, 255, 255, 0.1);
-            border-top-color: #ededed;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-          }
-          @keyframes spin {
-            to { transform: rotate(360deg); }
-          }
           .icon-error {
             width: 48px;
             height: 48px;
@@ -124,7 +106,6 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
       <body>
         <div class="card">
           ${success ? `
-            <div class="spinner"></div>
             <h1>Opening Midlight...</h1>
             <p>You've signed in successfully. The app should open automatically.</p>
             <a href="${protocolUrl}" class="btn">Open Midlight</a>
