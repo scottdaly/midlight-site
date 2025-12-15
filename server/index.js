@@ -27,8 +27,8 @@ if (process.env.NODE_ENV === 'production') {
   if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
     throw new Error('ADMIN_USER and ADMIN_PASS must be set in production');
   }
-  if (process.env.ADMIN_PASS.length < 16) {
-    throw new Error('ADMIN_PASS must be at least 16 characters in production');
+  if (process.env.ADMIN_PASS.length < 8) {
+    throw new Error('ADMIN_PASS must be at least 8 characters in production');
   }
 }
 
