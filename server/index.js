@@ -22,6 +22,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Production security checks - fail fast if critical env vars are missing
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.ADMIN_USER || !process.env.ADMIN_PASS) {
+    throw new Error('ADMIN_USER and ADMIN_PASS must be set in production');
+  }
+  if (process.env.ADMIN_PASS.length < 16) {
+    throw new Error('ADMIN_PASS must be at least 16 characters in production');
+  }
+}
+
 // Configure Passport for OAuth
 configurePassport();
 
@@ -64,8 +74,17 @@ const csrfProtection = csrf({
 
 // Middleware to conditionally apply CSRF protection
 const conditionalCsrf = (req, res, next) => {
-  // Exempt desktop clients (they use bearer tokens, not cookies for auth)
+  // Desktop clients must use Bearer token authentication (prevents CSRF bypass via header spoofing)
   if (req.headers['x-client-type'] === 'desktop') {
+    const authHeader = req.headers.authorization;
+    // Allow desktop requests only if they have a Bearer token OR are auth routes
+    // (auth routes don't have tokens yet - user is logging in)
+    const isAuthRoute = req.baseUrl === '/api/auth' || req.path.startsWith('/auth');
+    if (!isAuthRoute && (!authHeader || !authHeader.startsWith('Bearer '))) {
+      return res.status(401).json({
+        error: 'Desktop clients must use Bearer token authentication'
+      });
+    }
     return next();
   }
   // Exempt GET, HEAD, OPTIONS (safe methods)
@@ -102,10 +121,23 @@ const submissionLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+
 // Basic Auth Middleware for Admin
 const basicAuth = (req, res, next) => {
+  const ADMIN_USER = process.env.ADMIN_USER;
+  const ADMIN_PASS = process.env.ADMIN_PASS;
+
+  // In development, allow fallback credentials but warn
+  if (!ADMIN_USER || !ADMIN_PASS) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Admin authentication not configured' });
+    }
+    // Dev fallback - still require auth but use defaults
+    console.warn('[Security] Using default admin credentials - set ADMIN_USER and ADMIN_PASS in production');
+  }
+
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader) {
     res.setHeader('WWW-Authenticate', 'Basic');
     return res.status(401).send('Authentication required');
@@ -115,11 +147,10 @@ const basicAuth = (req, res, next) => {
   const user = auth[0];
   const pass = auth[1];
 
-  // TODO: Use environment variables for credentials in production
-  const ADMIN_USER = process.env.ADMIN_USER || 'admin';
-  const ADMIN_PASS = process.env.ADMIN_PASS || 'midlight_secret';
+  const expectedUser = ADMIN_USER || 'admin';
+  const expectedPass = ADMIN_PASS || 'midlight_secret';
 
-  if (user === ADMIN_USER && pass === ADMIN_PASS) {
+  if (user === expectedUser && pass === expectedPass) {
     next();
   } else {
     res.setHeader('WWW-Authenticate', 'Basic');

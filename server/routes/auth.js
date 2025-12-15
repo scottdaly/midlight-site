@@ -16,16 +16,120 @@ import {
   generateOAuthState,
   validateOAuthState
 } from '../services/tokenService.js';
+import { authLimiter, signupLimiter, refreshLimiter } from '../middleware/rateLimiters.js';
 
 const router = Router();
 
 const DESKTOP_REDIRECT_BASE = process.env.DESKTOP_REDIRECT_BASE || 'midlight://auth/callback';
 const WEB_REDIRECT_BASE = process.env.WEB_REDIRECT_BASE || 'http://localhost:5173';
 
+// Helper to render desktop OAuth callback page
+// This page opens the protocol handler and attempts to close the browser tab
+function renderDesktopCallbackPage(res, { success, code, error }) {
+  const protocolUrl = success
+    ? `${DESKTOP_REDIRECT_BASE}?code=${code}`
+    : `${DESKTOP_REDIRECT_BASE}?error=${error || 'auth_failed'}`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Authentication ${success ? 'Successful' : 'Failed'}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            padding: 20px;
+          }
+          .container {
+            text-align: center;
+            max-width: 400px;
+          }
+          .icon {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 24px;
+          }
+          .icon-success { color: #4ade80; }
+          .icon-error { color: #f87171; }
+          h1 {
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: ${success ? '#4ade80' : '#f87171'};
+          }
+          p {
+            color: #aaa;
+            margin-bottom: 24px;
+            line-height: 1.5;
+          }
+          .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: background 0.2s;
+          }
+          .btn:hover { background: #2563eb; }
+          .auto-close {
+            margin-top: 16px;
+            font-size: 14px;
+            color: #666;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          ${success ? `
+            <svg class="icon icon-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <h1>Authentication Successful!</h1>
+            <p>You've been signed in to Midlight. You can close this tab and return to the app.</p>
+          ` : `
+            <svg class="icon icon-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <h1>Authentication Failed</h1>
+            <p>Something went wrong during sign in. Please close this tab and try again.</p>
+          `}
+          <a href="${protocolUrl}" class="btn">Open Midlight</a>
+          <p class="auto-close">This tab will attempt to close automatically...</p>
+        </div>
+        <script>
+          // Open the protocol handler
+          window.location.href = '${protocolUrl}';
+
+          // Try to close this tab after a short delay
+          setTimeout(function() {
+            window.close();
+          }, 1500);
+        </script>
+      </body>
+    </html>
+  `;
+
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+}
+
 // Validation middleware
 const signupValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
-  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   body('displayName').optional().trim().isLength({ min: 1, max: 100 })
 ];
 
@@ -54,7 +158,7 @@ function setRefreshCookie(res, refreshToken, expiresAt) {
 }
 
 // POST /api/auth/signup
-router.post('/signup', signupValidation, async (req, res) => {
+router.post('/signup', signupLimiter, signupValidation, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -66,6 +170,12 @@ router.post('/signup', signupValidation, async (req, res) => {
     // Check if user already exists
     const existingUser = findUserByEmail(email);
     if (existingUser) {
+      // Check if this is an OAuth-only account
+      if (!existingUser.password_hash) {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Try signing in with Google instead.'
+        });
+      }
       return res.status(409).json({ error: 'Email already registered' });
     }
 
@@ -96,7 +206,7 @@ router.post('/signup', signupValidation, async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', loginValidation, async (req, res) => {
+router.post('/login', authLimiter, loginValidation, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -114,7 +224,7 @@ router.post('/login', loginValidation, async (req, res) => {
     // Check if user has password (might be OAuth-only)
     if (!user.password_hash) {
       return res.status(401).json({
-        error: 'This account uses social login. Please sign in with Google or GitHub.'
+        error: 'This account uses social login. Please sign in with Google.'
       });
     }
 
@@ -148,7 +258,7 @@ router.post('/login', loginValidation, async (req, res) => {
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', refreshLimiter, (req, res) => {
   try {
     const refreshToken = req.cookies?.refreshToken;
 
@@ -231,7 +341,8 @@ router.get('/google/callback', (req, res, next) => {
         if (stateData.devCallbackPort) {
           return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?error=auth_failed`);
         }
-        return res.redirect(`${DESKTOP_REDIRECT_BASE}?error=auth_failed`);
+        // Production: render callback page that opens protocol and closes tab
+        return renderDesktopCallbackPage(res, { success: false, error: 'auth_failed' });
       }
       return res.redirect(`${WEB_REDIRECT_BASE}/login?error=auth_failed`);
     }
@@ -247,63 +358,8 @@ router.get('/google/callback', (req, res, next) => {
       if (stateData.devCallbackPort) {
         return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?code=${code}`);
       }
-      return res.redirect(`${DESKTOP_REDIRECT_BASE}?code=${code}`);
-    }
-
-    // Web: set cookie and redirect (access token in URL is less risky for web)
-    setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
-    res.redirect(`${WEB_REDIRECT_BASE}?accessToken=${tokens.accessToken}`);
-  })(req, res, next);
-});
-
-// GET /api/auth/github - Initiate GitHub OAuth
-router.get('/github', (req, res, next) => {
-  const isDesktop = req.query.desktop === 'true';
-  // Dev mode: accept callback_port for local HTTP server callback (avoids protocol conflicts)
-  const devCallbackPort = req.query.callback_port ? parseInt(req.query.callback_port, 10) : null;
-  // Use cryptographically secure state instead of predictable 'desktop'/'web'
-  const state = generateOAuthState(isDesktop, devCallbackPort);
-
-  passport.authenticate('github', {
-    scope: ['user:email'],
-    state
-  })(req, res, next);
-});
-
-// GET /api/auth/github/callback
-router.get('/github/callback', (req, res, next) => {
-  // Validate state before processing callback
-  const stateData = validateOAuthState(req.query.state);
-  if (!stateData) {
-    console.error('GitHub auth error: Invalid or expired OAuth state');
-    return res.redirect(`${WEB_REDIRECT_BASE}/login?error=invalid_state`);
-  }
-
-  passport.authenticate('github', { session: false }, (err, user) => {
-    if (err || !user) {
-      console.error('GitHub auth error:', err);
-      if (stateData.isDesktop) {
-        // Dev mode: redirect to local HTTP server
-        if (stateData.devCallbackPort) {
-          return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?error=auth_failed`);
-        }
-        return res.redirect(`${DESKTOP_REDIRECT_BASE}?error=auth_failed`);
-      }
-      return res.redirect(`${WEB_REDIRECT_BASE}/login?error=auth_failed`);
-    }
-
-    // Generate tokens
-    const { userAgent, ipHash } = getClientInfo(req);
-    const tokens = generateTokenPair(user.id, userAgent, ipHash);
-
-    if (stateData.isDesktop) {
-      // Desktop: use one-time exchange code instead of exposing tokens in URL
-      const code = generateExchangeCode(user.id, tokens);
-      // Dev mode: redirect to local HTTP server instead of protocol handler
-      if (stateData.devCallbackPort) {
-        return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?code=${code}`);
-      }
-      return res.redirect(`${DESKTOP_REDIRECT_BASE}?code=${code}`);
+      // Production: render callback page that opens protocol and closes tab
+      return renderDesktopCallbackPage(res, { success: true, code });
     }
 
     // Web: set cookie and redirect (access token in URL is less risky for web)
