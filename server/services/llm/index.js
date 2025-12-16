@@ -8,17 +8,19 @@ export const MODELS = {
   anthropic: anthropicProvider.ANTHROPIC_MODELS
 };
 
-// Default models by tier
-export const DEFAULT_MODELS = {
-  free: {
-    openai: 'gpt-4o-mini',
-    anthropic: 'claude-3-haiku-20240307'
-  },
-  premium: {
-    openai: 'gpt-4o',
-    anthropic: 'claude-sonnet-4-20250514'
-  }
+// Tier hierarchy - higher index = more access
+const TIER_LEVELS = {
+  free: 0,
+  premium: 1,
+  pro: 2
 };
+
+// Check if user tier can access model tier
+function canAccessTier(userTier, modelTier) {
+  const userLevel = TIER_LEVELS[userTier] ?? 0;
+  const modelLevel = TIER_LEVELS[modelTier] ?? 0;
+  return userLevel >= modelLevel;
+}
 
 function getProvider(providerName) {
   switch (providerName) {
@@ -164,61 +166,33 @@ export function getAvailableModels(tier = 'free') {
     anthropic: []
   };
 
-  // Free tier models
+  // Filter OpenAI models by tier access
   if (openaiProvider.isConfigured()) {
-    models.openai.push({
-      ...MODELS.openai.free,
-      tier: 'free'
-    });
+    models.openai = MODELS.openai
+      .filter(model => canAccessTier(tier, model.tier))
+      .map(model => ({ ...model }));
   }
 
+  // Filter Anthropic models by tier access
   if (anthropicProvider.isConfigured()) {
-    models.anthropic.push({
-      ...MODELS.anthropic.free,
-      tier: 'free'
-    });
-  }
-
-  // Premium tier models
-  if (tier === 'premium') {
-    if (openaiProvider.isConfigured()) {
-      models.openai.push({
-        ...MODELS.openai.premium,
-        tier: 'premium'
-      });
-    }
-
-    if (anthropicProvider.isConfigured()) {
-      models.anthropic.push({
-        ...MODELS.anthropic.premium,
-        tier: 'premium'
-      });
-    }
+    models.anthropic = MODELS.anthropic
+      .filter(model => canAccessTier(tier, model.tier))
+      .map(model => ({ ...model }));
   }
 
   return models;
 }
 
-export function isModelAllowed(model, tier) {
-  const freeModels = [
-    MODELS.openai.free.id,
-    MODELS.anthropic.free.id
-  ];
+export function isModelAllowed(modelId, tier) {
+  // Check all models from both providers
+  const allModels = [...MODELS.openai, ...MODELS.anthropic];
+  const model = allModels.find(m => m.id === modelId);
 
-  const premiumModels = [
-    MODELS.openai.premium.id,
-    MODELS.anthropic.premium.id
-  ];
-
-  if (freeModels.includes(model)) {
-    return true;
+  if (!model) {
+    return false;
   }
 
-  if (tier === 'premium' && premiumModels.includes(model)) {
-    return true;
-  }
-
-  return false;
+  return canAccessTier(tier, model.tier);
 }
 
 export function getProviderStatus() {

@@ -4,21 +4,31 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
 
-// Model configuration
-export const ANTHROPIC_MODELS = {
-  free: {
-    id: 'claude-3-haiku-20240307',
-    name: 'Claude 3 Haiku',
+// Model configuration - each model has its own tier
+// Users can access any model at or below their subscription tier
+export const ANTHROPIC_MODELS = [
+  {
+    id: 'claude-haiku-4-5-20251001',
+    name: 'Claude Haiku 4.5',
+    tier: 'free',
     contextWindow: 200000,
-    maxOutput: 4096
+    maxOutput: 8192
   },
-  premium: {
-    id: 'claude-sonnet-4-20250514',
-    name: 'Claude Sonnet 4',
+  {
+    id: 'claude-sonnet-4-5-20250929',
+    name: 'Claude Sonnet 4.5',
+    tier: 'premium',
+    contextWindow: 200000,
+    maxOutput: 8192
+  },
+  {
+    id: 'claude-opus-4-5-20251101',
+    name: 'Claude Opus 4.5',
+    tier: 'pro',
     contextWindow: 200000,
     maxOutput: 8192
   }
-};
+];
 
 // Convert OpenAI-style messages to Anthropic format
 function convertMessages(messages) {

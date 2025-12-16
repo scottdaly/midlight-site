@@ -4,21 +4,31 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Model configuration
-export const OPENAI_MODELS = {
-  free: {
-    id: 'gpt-4o-mini',
-    name: 'GPT-4o Mini',
+// Model configuration - each model has its own tier
+// Users can access any model at or below their subscription tier
+export const OPENAI_MODELS = [
+  {
+    id: 'gpt-5-nano',
+    name: 'GPT-5 Nano',
+    tier: 'free',
     contextWindow: 128000,
     maxOutput: 16384
   },
-  premium: {
-    id: 'gpt-4o',
-    name: 'GPT-4o',
+  {
+    id: 'gpt-5-mini',
+    name: 'GPT-5 Mini',
+    tier: 'free',
+    contextWindow: 128000,
+    maxOutput: 16384
+  },
+  {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    tier: 'premium',
     contextWindow: 128000,
     maxOutput: 16384
   }
-};
+];
 
 export async function chat({
   model,
