@@ -137,11 +137,20 @@ export async function chatWithTools({
   const response = await client.chat.completions.create(params);
 
   const message = response.choices[0]?.message;
-  const toolCalls = message?.tool_calls?.map(tc => ({
-    id: tc.id,
-    name: tc.function.name,
-    arguments: JSON.parse(tc.function.arguments)
-  }));
+  const toolCalls = message?.tool_calls?.map(tc => {
+    let args = {};
+    try {
+      args = JSON.parse(tc.function.arguments);
+    } catch (e) {
+      console.error('Failed to parse tool arguments:', tc.function.arguments, e);
+      args = {};
+    }
+    return {
+      id: tc.id,
+      name: tc.function.name,
+      arguments: args
+    };
+  });
 
   return {
     id: response.id,

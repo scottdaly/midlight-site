@@ -188,7 +188,7 @@ router.post('/chat-with-tools', [
       });
     }
 
-    res.status(500).json({ error: 'Chat with tools failed' });
+    res.status(500).json({ error: error.message || 'Chat with tools failed' });
   }
 });
 
