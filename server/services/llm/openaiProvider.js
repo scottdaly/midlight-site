@@ -30,6 +30,9 @@ export const OPENAI_MODELS = [
   }
 ];
 
+// Models that don't support temperature parameter
+const NO_TEMPERATURE_MODELS = ['gpt-5-nano', 'gpt-5-mini', 'gpt-5.2'];
+
 export async function chat({
   model,
   messages,
@@ -40,10 +43,14 @@ export async function chat({
   const params = {
     model,
     messages,
-    temperature,
     max_completion_tokens: maxTokens,
     stream
   };
+
+  // Only include temperature if the model supports it
+  if (!NO_TEMPERATURE_MODELS.includes(model)) {
+    params.temperature = temperature;
+  }
 
   if (stream) {
     return streamChat(params);
@@ -108,7 +115,7 @@ export async function chatWithTools({
   temperature = 0.7,
   maxTokens = 4096
 }) {
-  const response = await client.chat.completions.create({
+  const params = {
     model,
     messages,
     tools: tools.map(tool => ({
@@ -119,9 +126,15 @@ export async function chatWithTools({
         parameters: tool.parameters
       }
     })),
-    temperature,
     max_completion_tokens: maxTokens
-  });
+  };
+
+  // Only include temperature if the model supports it
+  if (!NO_TEMPERATURE_MODELS.includes(model)) {
+    params.temperature = temperature;
+  }
+
+  const response = await client.chat.completions.create(params);
 
   const message = response.choices[0]?.message;
   const toolCalls = message?.tool_calls?.map(tc => ({
