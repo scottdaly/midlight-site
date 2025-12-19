@@ -41,7 +41,7 @@ export async function chat({
     model,
     messages,
     temperature,
-    max_tokens: maxTokens,
+    max_completion_tokens: maxTokens,
     stream
   };
 
@@ -120,7 +120,7 @@ export async function chatWithTools({
       }
     })),
     temperature,
-    max_tokens: maxTokens
+    max_completion_tokens: maxTokens
   });
 
   const message = response.choices[0]?.message;

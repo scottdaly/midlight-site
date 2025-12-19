@@ -1,11 +1,13 @@
 import * as openaiProvider from './openaiProvider.js';
 import * as anthropicProvider from './anthropicProvider.js';
+import * as geminiProvider from './geminiProvider.js';
 import { checkQuota, trackUsage } from './quotaManager.js';
 
 // Combined model configuration
 export const MODELS = {
   openai: openaiProvider.OPENAI_MODELS,
-  anthropic: anthropicProvider.ANTHROPIC_MODELS
+  anthropic: anthropicProvider.ANTHROPIC_MODELS,
+  gemini: geminiProvider.GEMINI_MODELS
 };
 
 // Tier hierarchy - higher index = more access
@@ -28,6 +30,8 @@ function getProvider(providerName) {
       return openaiProvider;
     case 'anthropic':
       return anthropicProvider;
+    case 'gemini':
+      return geminiProvider;
     default:
       throw new Error(`Unknown provider: ${providerName}`);
   }
@@ -163,7 +167,8 @@ export async function chatWithTools({
 export function getAvailableModels(tier = 'free') {
   const models = {
     openai: [],
-    anthropic: []
+    anthropic: [],
+    gemini: []
   };
 
   // Filter OpenAI models by tier access
@@ -180,12 +185,19 @@ export function getAvailableModels(tier = 'free') {
       .map(model => ({ ...model }));
   }
 
+  // Filter Gemini models by tier access
+  if (geminiProvider.isConfigured()) {
+    models.gemini = MODELS.gemini
+      .filter(model => canAccessTier(tier, model.tier))
+      .map(model => ({ ...model }));
+  }
+
   return models;
 }
 
 export function isModelAllowed(modelId, tier) {
-  // Check all models from both providers
-  const allModels = [...MODELS.openai, ...MODELS.anthropic];
+  // Check all models from all providers
+  const allModels = [...MODELS.openai, ...MODELS.anthropic, ...MODELS.gemini];
   const model = allModels.find(m => m.id === modelId);
 
   if (!model) {
@@ -198,6 +210,7 @@ export function isModelAllowed(modelId, tier) {
 export function getProviderStatus() {
   return {
     openai: openaiProvider.isConfigured(),
-    anthropic: anthropicProvider.isConfigured()
+    anthropic: anthropicProvider.isConfigured(),
+    gemini: geminiProvider.isConfigured()
   };
 }
