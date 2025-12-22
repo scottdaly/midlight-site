@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import passport from 'passport';
 import {
   findUserByEmail,
+  findUserById,
   createUser,
   verifyPassword,
   hashIP
@@ -287,6 +288,13 @@ router.post('/refresh', refreshLimiter, (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
+    // Get user data
+    const user = findUserById(session.user_id);
+    if (!user) {
+      res.clearCookie('refreshToken', { path: '/api/auth' });
+      return res.status(401).json({ error: 'User not found' });
+    }
+
     // Invalidate old session
     invalidateSession(refreshToken);
 
@@ -298,6 +306,12 @@ router.post('/refresh', refreshLimiter, (req, res) => {
     setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
     res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        avatarUrl: user.avatar_url
+      },
       accessToken: tokens.accessToken,
       expiresIn: tokens.expiresIn
     });
