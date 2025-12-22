@@ -915,9 +915,9 @@ nav {
 .auth-page {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 2rem;
+  padding: 6rem 2rem 2rem;
   background: var(--bg-color);
 }
 

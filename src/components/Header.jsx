@@ -113,7 +113,7 @@ export default function Header() {
               )}
             </div>
           ) : (
-            <Link to="/login" className="nav-link">Sign in</Link>
+            <Link to="/login" className="nav-link">Log in</Link>
           )}
         </div>
       </div>

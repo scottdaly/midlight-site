@@ -44,7 +44,7 @@ function validatePassword(password) {
 
 export default function Auth() {
   const location = useLocation();
-  const initialMode = location.pathname === '/signup' ? 'signup' : 'signin';
+  const initialMode = location.pathname === '/signup' ? 'signup' : 'login';
 
   const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState('');
@@ -96,8 +96,8 @@ export default function Auth() {
     setFormError('');
     setFormErrors({});
 
-    if (mode === 'signin') {
-      // Sign in validation
+    if (mode === 'login') {
+      // Login validation
       if (!email || !password) {
         setFormError('Please enter your email and password');
         return;
@@ -174,10 +174,10 @@ export default function Auth() {
         <div className="auth-segmented-control">
           <button
             type="button"
-            className={`auth-segment ${mode === 'signin' ? 'active' : ''}`}
-            onClick={() => setMode('signin')}
+            className={`auth-segment ${mode === 'login' ? 'active' : ''}`}
+            onClick={() => setMode('login')}
           >
-            Sign in
+            Log in
           </button>
           <button
             type="button"
@@ -236,8 +236,8 @@ export default function Auth() {
               className={`form-input ${formErrors.password ? 'input-error' : ''}`}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'signin' ? 'Enter your password' : 'Create a strong password'}
-              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+              placeholder={mode === 'login' ? 'Enter your password' : 'Create a strong password'}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               disabled={isSubmitting}
             />
             <div className={`password-requirements ${mode === 'signup' && password ? 'visible' : ''}`}>
@@ -281,8 +281,8 @@ export default function Auth() {
               disabled={isSubmitting || (mode === 'signup' && !isPasswordValid)}
             >
               {isSubmitting
-                ? (mode === 'signin' ? 'Signing in...' : 'Creating account...')
-                : (mode === 'signin' ? 'Sign in' : 'Create account')
+                ? (mode === 'login' ? 'Logging in...' : 'Creating account...')
+                : (mode === 'login' ? 'Log in' : 'Create account')
               }
             </button>
           </div>
