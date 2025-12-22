@@ -71,7 +71,6 @@ export default function Header() {
         </Link>
 
         <div className="header-actions">
-          <Link to="/download" className="btn-primary header-cta">Download</Link>
           {loading ? (
             <div className="header-loading" />
           ) : isAuthenticated ? (
@@ -113,7 +112,10 @@ export default function Header() {
               )}
             </div>
           ) : (
-            <Link to="/login" className="nav-link">Log in</Link>
+            <>
+              <Link to="/login" className="nav-link">Log in</Link>
+              <Link to="/download" className="btn-primary header-cta">Download</Link>
+            </>
           )}
         </div>
       </div>
