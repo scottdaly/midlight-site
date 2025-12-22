@@ -4,8 +4,7 @@ import { ThemeProvider } from './ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
 import Download from './pages/Download';
 import AdminErrors from './pages/AdminErrors';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
+import Auth from './pages/Auth';
 import Account from './pages/Account';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -171,8 +170,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/download" element={<Download />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
+            <Route path="/login" element={<Auth />} />
+            <Route path="/signup" element={<Auth />} />
             <Route
               path="/account"
               element={

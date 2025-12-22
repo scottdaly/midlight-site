@@ -116,10 +116,7 @@ export default function Header() {
               )}
             </div>
           ) : (
-            <>
-              <Link to="/login" className="nav-link">Sign in</Link>
-              <Link to="/signup" className="btn-primary header-cta">Get Started</Link>
-            </>
+            <Link to="/login" className="nav-link">Sign in</Link>
           )}
         </div>
       </div>

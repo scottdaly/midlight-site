@@ -953,6 +953,39 @@ nav {
   font-size: 1rem;
 }
 
+/* Segmented Control */
+.auth-segmented-control {
+  display: flex;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 1.5rem;
+}
+
+.auth-segment {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-segment:hover:not(.active) {
+  color: var(--text-main);
+}
+
+.auth-segment.active {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
 .auth-error {
   padding: 0.75rem 1rem;
   background: rgba(255, 85, 85, 0.1);
