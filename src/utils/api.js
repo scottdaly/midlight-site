@@ -135,10 +135,11 @@ export async function api(endpoint, options = {}) {
   });
 
   // If 401, try to refresh token and retry once
-  if (response.status === 401 && accessToken) {
+  // Try refresh even if accessToken is empty - we might have a valid refresh cookie
+  if (response.status === 401) {
     const refreshed = await refreshAccessToken();
 
-    if (refreshed) {
+    if (refreshed && refreshed.accessToken) {
       // Retry the request with new token
       headers['Authorization'] = `Bearer ${refreshed.accessToken}`;
       response = await fetch(url, {

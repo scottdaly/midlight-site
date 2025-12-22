@@ -14,39 +14,41 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Try to restore session on mount
+  // Handle auth on mount - either OAuth callback or session restoration
   useEffect(() => {
-    async function restoreSession() {
+    async function initializeAuth() {
       try {
-        const restoredUser = await tryRestoreSession();
-        if (restoredUser) {
-          setUser(restoredUser);
+        // Check for OAuth callback first
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('accessToken');
+
+        if (token) {
+          // OAuth callback - store token and fetch user
+          setAccessToken(token);
+
+          // Clean URL
+          window.history.replaceState({}, '', window.location.pathname);
+
+          // Fetch user data
+          const fetchedUser = await fetchUser();
+          if (fetchedUser) {
+            setUser(fetchedUser);
+          }
+        } else {
+          // No OAuth callback - try to restore session
+          const restoredUser = await tryRestoreSession();
+          if (restoredUser) {
+            setUser(restoredUser);
+          }
         }
       } catch (err) {
-        console.error('Failed to restore session:', err);
+        console.error('Failed to initialize auth:', err);
       } finally {
         setLoading(false);
       }
     }
 
-    restoreSession();
-  }, []);
-
-  // Handle OAuth callback - check URL for access token
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('accessToken');
-
-    if (token) {
-      // Store token and fetch user
-      setAccessToken(token);
-
-      // Clean URL
-      window.history.replaceState({}, '', window.location.pathname);
-
-      // Fetch user data
-      fetchUser();
-    }
+    initializeAuth();
   }, []);
 
   const fetchUser = useCallback(async () => {
