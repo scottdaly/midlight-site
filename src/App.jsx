@@ -1,9 +1,15 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { ThemeProvider } from './ThemeContext';
+import { AuthProvider } from './contexts/AuthContext';
 import Download from './pages/Download';
 import AdminErrors from './pages/AdminErrors';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+import Account from './pages/Account';
+import Header from './components/Header';
 import Footer from './components/Footer';
+import ProtectedRoute from './components/ProtectedRoute';
 
 // Simple Icon Components (SVG)
 const CursorIcon = () => (
@@ -82,14 +88,7 @@ const RefreshIcon = () => (
 function Home() {
   return (
     <div className="app">
-      {/* Navigation */}
-      <div className="container">
-        <nav>
-          <Link to="/" className="logo">
-            <CursorIcon /> Midlight
-          </Link>
-        </nav>
-      </div>
+      <Header />
 
       {/* Hero Section */}
       <section className="hero">
@@ -168,11 +167,23 @@ function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/download" element={<Download />} />
-          <Route path="/admin/errors" element={<AdminErrors />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/download" element={<Download />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route
+              path="/account"
+              element={
+                <ProtectedRoute>
+                  <Account />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/admin/errors" element={<AdminErrors />} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

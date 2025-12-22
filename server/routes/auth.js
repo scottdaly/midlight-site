@@ -376,9 +376,9 @@ router.get('/google/callback', (req, res, next) => {
       return renderDesktopCallbackPage(res, { success: true, code });
     }
 
-    // Web: set cookie and redirect (access token in URL is less risky for web)
+    // Web: set cookie and redirect to login page (which will redirect to account)
     setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
-    res.redirect(`${WEB_REDIRECT_BASE}?accessToken=${tokens.accessToken}`);
+    res.redirect(`${WEB_REDIRECT_BASE}/login?accessToken=${tokens.accessToken}`);
   })(req, res, next);
 });
 
