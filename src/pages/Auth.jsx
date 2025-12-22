@@ -194,7 +194,7 @@ export default function Auth() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="auth-form">
+        <form onSubmit={handleSubmit} className="auth-form" key={mode}>
           {mode === 'signup' && (
             <div className="form-group">
               <label htmlFor="displayName">Name (optional)</label>
@@ -240,18 +240,16 @@ export default function Auth() {
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
               disabled={isSubmitting}
             />
-            {mode === 'signup' && password && (
-              <div className="password-requirements">
-                {['At least 8 characters', 'One uppercase letter', 'One lowercase letter', 'One number'].map((req) => (
-                  <span
-                    key={req}
-                    className={passwordErrors.includes(req) ? 'requirement-unmet' : 'requirement-met'}
-                  >
-                    {passwordErrors.includes(req) ? '○' : '●'} {req}
-                  </span>
-                ))}
-              </div>
-            )}
+            <div className={`password-requirements ${mode === 'signup' && password ? 'visible' : ''}`}>
+              {['At least 8 characters', 'One uppercase letter', 'One lowercase letter', 'One number'].map((req) => (
+                <span
+                  key={req}
+                  className={passwordErrors.includes(req) ? 'requirement-unmet' : 'requirement-met'}
+                >
+                  {passwordErrors.includes(req) ? '○' : '●'} {req}
+                </span>
+              ))}
+            </div>
             {formErrors.password && (
               <span className="field-error">{formErrors.password}</span>
             )}
@@ -276,16 +274,18 @@ export default function Auth() {
             </div>
           )}
 
-          <button
-            type="submit"
-            className="btn-primary auth-submit"
-            disabled={isSubmitting || (mode === 'signup' && !isPasswordValid)}
-          >
-            {isSubmitting
-              ? (mode === 'signin' ? 'Signing in...' : 'Creating account...')
-              : (mode === 'signin' ? 'Sign in' : 'Create account')
-            }
-          </button>
+          <div className="auth-form-footer">
+            <button
+              type="submit"
+              className="btn-primary auth-submit"
+              disabled={isSubmitting || (mode === 'signup' && !isPasswordValid)}
+            >
+              {isSubmitting
+                ? (mode === 'signin' ? 'Signing in...' : 'Creating account...')
+                : (mode === 'signin' ? 'Sign in' : 'Create account')
+              }
+            </button>
+          </div>
         </form>
 
         <div className="auth-divider">

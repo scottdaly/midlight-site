@@ -70,11 +70,8 @@ export default function Header() {
           <LogoIcon /> Midlight
         </Link>
 
-        <nav className="header-nav">
-          <Link to="/download" className="nav-link">Download</Link>
-        </nav>
-
         <div className="header-actions">
+          <Link to="/download" className="btn-primary header-cta">Download</Link>
           {loading ? (
             <div className="header-loading" />
           ) : isAuthenticated ? (
