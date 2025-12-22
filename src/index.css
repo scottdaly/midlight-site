@@ -1144,7 +1144,7 @@ nav {
   gap: 0.75rem;
   padding: 0.9rem 1.5rem;
   background: transparent;
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 50px;
   color: var(--text-main);
   font-size: 1rem;
@@ -1155,7 +1155,7 @@ nav {
 
 .btn-oauth:hover {
   background: var(--card-bg);
-  border-color: var(--border-hover);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 .btn-oauth:disabled {
