@@ -69,11 +69,11 @@ export default function Account() {
   }, []);
 
   // Handle Stripe checkout
-  const handleUpgrade = async (interval) => {
+  const handleUpgrade = async (priceType) => {
     setActionLoading('upgrade');
     try {
       const response = await apiPost('/api/subscription/checkout', {
-        interval,
+        priceType,
         successUrl: `${window.location.origin}/account?upgraded=true`,
         cancelUrl: `${window.location.origin}/account`,
       });
