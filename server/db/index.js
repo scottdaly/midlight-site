@@ -12,14 +12,15 @@ const dbPath = process.env.DB_PATH || path.join(__dirname, 'midlight_errors.db')
 
 const db = new Database(dbPath); // verbose: console.log
 
-// Initialize Schema
-const schemaPath = path.join(__dirname, 'schema.sql');
-const schema = fs.readFileSync(schemaPath, 'utf8');
-db.exec(schema);
-
-// Run migrations for existing databases
-// These safely add columns that may not exist
+// Run migrations for existing databases FIRST
+// These safely add columns that may not exist before schema indexes reference them
 function runMigrations() {
+  // Check if users table exists (if not, skip migrations - fresh install)
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").all();
+  if (tables.length === 0) {
+    return; // Fresh install, schema.sql will create everything
+  }
+
   const migrations = [
     // Add stripe_customer_id to users table
     {
@@ -54,7 +55,13 @@ function runMigrations() {
   }
 }
 
+// Run migrations first (for existing databases)
 runMigrations();
+
+// Initialize Schema (CREATE TABLE IF NOT EXISTS won't modify existing tables)
+const schemaPath = path.join(__dirname, 'schema.sql');
+const schema = fs.readFileSync(schemaPath, 'utf8');
+db.exec(schema);
 
 console.log(`Connected to SQLite database at ${dbPath}`);
 
