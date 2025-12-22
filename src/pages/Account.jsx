@@ -186,61 +186,93 @@ export default function Account() {
               {/* Subscription Section */}
               <section className="account-section">
                 <h2>Subscription</h2>
-                <div className="account-card">
-                  <div className="subscription-status">
-                    <div className={`subscription-badge ${isPremium ? 'premium' : 'free'}`}>
-                      {isPremium && <SparkleIcon />}
-                      {isPremium ? 'Premium' : 'Free'}
-                    </div>
-                    {subscription?.status === 'cancelled' && (
-                      <span className="subscription-note">
-                        Cancels on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-
-                  {isPremium ? (
-                    <div className="subscription-details">
-                      <p>
-                        You have unlimited AI queries and access to all premium models.
-                      </p>
-                      {subscription?.billingInterval && (
-                        <p className="billing-info">
-                          Billed {subscription.billingInterval}
-                          {subscription.currentPeriodEnd && (
-                            <> &middot; Next billing date: {new Date(subscription.currentPeriodEnd).toLocaleDateString()}</>
-                          )}
-                        </p>
-                      )}
-                      <button
-                        onClick={handleManageBilling}
-                        className="btn-secondary"
-                        disabled={actionLoading === 'portal'}
-                      >
-                        {actionLoading === 'portal' ? 'Loading...' : 'Manage Billing'}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="upgrade-options">
-                      <p>Upgrade to Premium for unlimited AI queries and advanced models.</p>
-                      <div className="upgrade-buttons">
-                        <button
-                          onClick={() => handleUpgrade('monthly')}
-                          className="btn-primary"
-                          disabled={actionLoading === 'upgrade'}
-                        >
-                          {actionLoading === 'upgrade' ? 'Loading...' : 'Upgrade Monthly - $20/mo'}
-                        </button>
-                        <button
-                          onClick={() => handleUpgrade('yearly')}
-                          className="btn-secondary"
-                          disabled={actionLoading === 'upgrade'}
-                        >
-                          Upgrade Yearly - $180/yr (save 25%)
-                        </button>
+                {subscription?.status === 'cancelled' && (
+                  <p className="subscription-cancelled-note">
+                    Your Premium subscription will end on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                  </p>
+                )}
+                <div className="plan-cards">
+                  {/* Free Plan Card */}
+                  <div className={`plan-card ${!isPremium ? 'current' : ''}`}>
+                    <div className="plan-header">
+                      <h3>Free</h3>
+                      <div className="plan-price">
+                        <span className="price-amount">$0</span>
+                        <span className="price-period">/month</span>
                       </div>
                     </div>
-                  )}
+                    <ul className="plan-features">
+                      <li><CheckIcon /> 100 AI queries per month</li>
+                      <li><CheckIcon /> Basic AI models</li>
+                      <li><CheckIcon /> Cloud sync</li>
+                      <li><CheckIcon /> All editor features</li>
+                    </ul>
+                    <div className="plan-action">
+                      {!isPremium ? (
+                        <span className="plan-current-label">Current Plan</span>
+                      ) : (
+                        <span className="plan-downgrade-note">Downgrade via billing portal</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Premium Plan Card */}
+                  <div className={`plan-card premium ${isPremium ? 'current' : ''}`}>
+                    <div className="plan-badge">Most Popular</div>
+                    <div className="plan-header">
+                      <h3><SparkleIcon /> Premium</h3>
+                      <div className="plan-price">
+                        <span className="price-amount">$20</span>
+                        <span className="price-period">/month</span>
+                      </div>
+                      <div className="plan-price-alt">or $180/year (save 25%)</div>
+                    </div>
+                    <ul className="plan-features">
+                      <li><CheckIcon /> Unlimited AI queries</li>
+                      <li><CheckIcon /> Advanced AI models</li>
+                      <li><CheckIcon /> Priority support</li>
+                      <li><CheckIcon /> Early access to new features</li>
+                    </ul>
+                    <div className="plan-action">
+                      {isPremium ? (
+                        <>
+                          <span className="plan-current-label">Current Plan</span>
+                          {subscription?.billingInterval && (
+                            <p className="plan-billing-info">
+                              Billed {subscription.billingInterval}
+                              {subscription.currentPeriodEnd && (
+                                <> &middot; Renews {new Date(subscription.currentPeriodEnd).toLocaleDateString()}</>
+                              )}
+                            </p>
+                          )}
+                          <button
+                            onClick={handleManageBilling}
+                            className="btn-secondary plan-btn"
+                            disabled={actionLoading === 'portal'}
+                          >
+                            {actionLoading === 'portal' ? 'Loading...' : 'Manage Billing'}
+                          </button>
+                        </>
+                      ) : (
+                        <div className="plan-upgrade-buttons">
+                          <button
+                            onClick={() => handleUpgrade('monthly')}
+                            className="btn-primary plan-btn"
+                            disabled={actionLoading === 'upgrade'}
+                          >
+                            {actionLoading === 'upgrade' ? 'Loading...' : 'Upgrade Monthly'}
+                          </button>
+                          <button
+                            onClick={() => handleUpgrade('yearly')}
+                            className="btn-secondary plan-btn"
+                            disabled={actionLoading === 'upgrade'}
+                          >
+                            Upgrade Yearly
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </section>
 

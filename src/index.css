@@ -1283,59 +1283,159 @@ nav {
   color: var(--text-muted);
 }
 
-/* Subscription Section */
-.subscription-status {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+/* Subscription Section - Plan Cards */
+.subscription-cancelled-note {
+  color: var(--text-muted);
+  font-size: 0.9rem;
   margin-bottom: 1rem;
 }
 
-.subscription-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 600;
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
 }
 
-.subscription-badge.free {
-  background: var(--icon-bg);
-  color: var(--text-muted);
+.plan-card {
+  position: relative;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.subscription-badge.premium {
+.plan-card:hover {
+  border-color: var(--border-hover);
+}
+
+.plan-card.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.plan-card.premium {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(99, 102, 241, 0.05));
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.plan-card.premium:hover {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.plan-card.premium.current {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 1px #8b5cf6;
+}
+
+.plan-badge {
+  position: absolute;
+  top: -10px;
+  right: 1rem;
   background: linear-gradient(135deg, #8b5cf6, #6366f1);
   color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
 }
 
-.subscription-note {
+.plan-header {
+  margin-bottom: 1.25rem;
+}
+
+.plan-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.price-amount {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.price-period {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.plan-price-alt {
   font-size: 0.85rem;
   color: var(--text-muted);
+  margin-top: 0.25rem;
 }
 
-.subscription-details p {
-  margin-bottom: 0.5rem;
-  color: var(--text-muted);
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+  flex: 1;
 }
 
-.billing-info {
-  font-size: 0.85rem !important;
-  color: var(--text-muted) !important;
-  margin-bottom: 1rem !important;
-}
-
-.upgrade-options p {
-  color: var(--text-muted);
-  margin-bottom: 1rem;
-}
-
-.upgrade-buttons {
+.plan-features li {
   display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.plan-features li svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.plan-action {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.plan-current-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 1rem;
+  background: var(--icon-bg);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.plan-downgrade-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.plan-billing-info {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0;
+}
+
+.plan-btn {
+  width: 100%;
+}
+
+.plan-upgrade-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .btn-secondary {
@@ -1567,14 +1667,8 @@ nav {
     font-size: 2rem;
   }
 
-  .upgrade-buttons {
-    flex-direction: column;
-  }
-
-  .upgrade-buttons .btn-primary,
-  .upgrade-buttons .btn-secondary {
-    width: 100%;
-    text-align: center;
+  .plan-cards {
+    grid-template-columns: 1fr;
   }
 
   .delete-actions {
