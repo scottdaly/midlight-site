@@ -12,6 +12,8 @@ import reportsRouter from './routes/reports.js';
 import authRouter from './routes/auth.js';
 import userRouter from './routes/user.js';
 import llmRouter from './routes/llm.js';
+import subscriptionRouter from './routes/subscription.js';
+import stripeWebhookRouter from './routes/stripeWebhook.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions } from './services/tokenService.js';
 import { getProviderStatus } from './services/llm/index.js';
@@ -57,6 +59,10 @@ app.use(helmet({
   },
 }));
 app.use(cors(corsOptions));
+
+// Stripe webhook needs raw body - mount BEFORE express.json()
+app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }), stripeWebhookRouter);
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(passport.initialize());
@@ -99,6 +105,7 @@ const conditionalCsrf = (req, res, next) => {
 app.use('/api/auth', conditionalCsrf);
 app.use('/api/user', conditionalCsrf);
 app.use('/api/llm', conditionalCsrf);
+app.use('/api/subscription', conditionalCsrf);
 
 // CSRF token endpoint for web clients
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
@@ -176,6 +183,7 @@ app.use('/api', reportsRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
+app.use('/api/subscription', subscriptionRouter);
 
 // Serve static files from frontend in production (optional, if not using Nginx for static)
 // Since the prompt mentions Nginx will proxy /api -> localhost:3001, we might not need to serve static here.

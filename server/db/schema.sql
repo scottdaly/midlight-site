@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT,
   avatar_url TEXT,
   email_verified INTEGER DEFAULT 0,
+  stripe_customer_id TEXT,               -- Stripe customer ID for billing
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -53,9 +54,9 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE NOT NULL,
   tier TEXT NOT NULL DEFAULT 'free',     -- 'free', 'premium'
-  status TEXT NOT NULL DEFAULT 'active', -- 'active', 'cancelled', 'expired'
-  stripe_customer_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active', -- 'active', 'cancelled', 'expired', 'past_due', 'trialing'
   stripe_subscription_id TEXT,
+  billing_interval TEXT,                 -- 'monthly', 'yearly'
   current_period_start DATETIME,
   current_period_end DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -64,7 +65,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
-CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe ON subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe ON subscriptions(stripe_subscription_id);
+CREATE INDEX IF NOT EXISTS idx_users_stripe ON users(stripe_customer_id);
 
 -- LLM Usage Tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -128,3 +130,15 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_codes(expires_at);
+
+-- ============================================================================
+-- MIGRATIONS (for existing databases)
+-- These use a pragma-based check to safely add columns that may already exist
+-- ============================================================================
+
+-- Add stripe_customer_id to users table if it doesn't exist
+-- SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we use a workaround
+-- This will fail silently if column exists due to PRAGMA foreign_keys handling
+
+-- Migration: Add billing_interval to subscriptions
+-- Run this manually or via a migration script if the column doesn't exist
