@@ -1231,6 +1231,10 @@ nav {
   gap: 1.5rem;
 }
 
+.account-section {
+  padding: 0;
+}
+
 .account-section h2 {
   font-size: 1.1rem;
   font-weight: 600;
