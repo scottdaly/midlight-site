@@ -208,7 +208,6 @@ export default function Account() {
                       onClick={() => setBillingPeriod('annual')}
                     >
                       Annual
-                      <span className="billing-save-badge">Save 25%</span>
                     </button>
                   </div>
                 </div>
