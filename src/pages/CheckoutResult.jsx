@@ -27,13 +27,13 @@ function CheckoutResult() {
               }}>
                 🎉
               </div>
-              <h1 style={{ marginBottom: '1rem' }}>Welcome to Pro!</h1>
+              <h1 style={{ marginBottom: '1rem' }}>You're all set!</h1>
               <p style={{
                 color: 'var(--text-muted)',
                 marginBottom: '2rem',
                 lineHeight: '1.6'
               }}>
-                Your subscription is now active. Return to the Midlight app to enjoy unlimited AI queries and premium features.
+                Your subscription is now active. You can close this tab and return to Midlight to start using your new features.
               </p>
             </>
           ) : (
