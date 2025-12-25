@@ -48,6 +48,14 @@ export async function createSession(userId, refreshToken, userAgent, ipHash) {
   const tokenHash = hashToken(refreshToken);
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
+  // Remove any existing sessions from the same user/device combination
+  // This prevents duplicate sessions when a user logs in multiple times from the same browser
+  const deleteStmt = db.prepare(`
+    DELETE FROM sessions
+    WHERE user_id = ? AND user_agent = ? AND ip_hash = ?
+  `);
+  deleteStmt.run(userId, userAgent, ipHash);
+
   const stmt = db.prepare(`
     INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_hash, expires_at)
     VALUES (?, ?, ?, ?, ?)

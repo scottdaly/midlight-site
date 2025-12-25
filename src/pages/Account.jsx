@@ -164,7 +164,6 @@ export default function Account() {
             <div className="account-sections">
               {/* Profile Section */}
               <section className="account-section">
-                <h2>Profile</h2>
                 <div className="account-card">
                   <div className="profile-info">
                     {user?.avatarUrl ? (
@@ -187,8 +186,8 @@ export default function Account() {
               </section>
 
               {/* Subscription Section */}
-              <section className="account-section">
-                <h2>Subscription</h2>
+              <section className="account-section subscription-section">
+                <h2>Manage Your Subscription</h2>
                 {subscription?.status === 'cancelled' && (
                   <p className="subscription-cancelled-note">
                     Your subscription will end on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}

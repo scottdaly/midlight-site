@@ -1288,10 +1288,17 @@ nav {
 }
 
 /* Subscription Section - Plan Cards */
+.subscription-section h2 {
+  font-size: 1.5rem;
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
+
 .subscription-cancelled-note {
   color: var(--text-muted);
   font-size: 0.9rem;
   margin-bottom: 1rem;
+  text-align: center;
 }
 
 /* Billing Period Toggle */

@@ -195,10 +195,13 @@ router.get('/usage', (req, res) => {
 // GET /api/user/sessions - Get active sessions
 router.get('/sessions', (req, res) => {
   try {
+    // Get unique sessions by user_agent, keeping only the most recent per device
     const stmt = db.prepare(`
       SELECT id, user_agent, created_at, expires_at
       FROM sessions
       WHERE user_id = ? AND expires_at > datetime('now')
+      GROUP BY user_agent
+      HAVING created_at = MAX(created_at)
       ORDER BY created_at DESC
     `);
     const sessions = stmt.all(req.user.id);
