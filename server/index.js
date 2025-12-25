@@ -97,6 +97,11 @@ const conditionalCsrf = (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     return next();
   }
+  // Exempt /api/auth/refresh - it's already protected by httpOnly + sameSite cookie
+  // and needs to work before the client has obtained a CSRF token
+  if (req.baseUrl === '/api/auth' && req.path === '/refresh') {
+    return next();
+  }
   // Apply CSRF protection for web clients on state-changing requests
   csrfProtection(req, res, next);
 };
