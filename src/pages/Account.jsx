@@ -144,6 +144,12 @@ export default function Account() {
   const isPro = subscription?.tier === 'pro' && subscription?.status === 'active';
   const isPremium = subscription?.tier === 'premium' && subscription?.status === 'active';
   const currentTier = isPremium ? 'premium' : isPro ? 'pro' : 'free';
+
+  // Check if the selected billing period matches the user's actual subscription
+  const userBillingInterval = subscription?.billingInterval; // 'monthly' or 'yearly'
+  const selectedInterval = billingPeriod === 'monthly' ? 'monthly' : 'yearly';
+  const billingMatches = userBillingInterval === selectedInterval;
+
   const usagePercent = usage?.quota?.limit
     ? Math.min((usage.quota.used / usage.quota.limit) * 100, 100)
     : 0;
@@ -238,7 +244,7 @@ export default function Account() {
                   </div>
 
                   {/* Pro Plan Card - $20/month */}
-                  <div className={`plan-card pro ${currentTier === 'pro' ? 'current' : ''}`}>
+                  <div className={`plan-card pro ${currentTier === 'pro' && billingMatches ? 'current' : ''}`}>
                     <div className="plan-badge">Most Popular</div>
                     <div className="plan-header">
                       <h3><SparkleIcon /> Pro</h3>
@@ -257,7 +263,7 @@ export default function Account() {
                       <li><CheckIcon /> Early access to new features</li>
                     </ul>
                     <div className="plan-action">
-                      {currentTier === 'pro' ? (
+                      {currentTier === 'pro' && billingMatches ? (
                         <>
                           <span className="plan-current-label">Current Plan</span>
                           {subscription?.billingInterval && (
@@ -276,6 +282,19 @@ export default function Account() {
                             {actionLoading === 'portal' ? 'Loading...' : 'Manage Billing'}
                           </button>
                         </>
+                      ) : currentTier === 'pro' && !billingMatches ? (
+                        <>
+                          <span className="plan-switch-note">
+                            You're on {userBillingInterval} billing
+                          </span>
+                          <button
+                            onClick={handleManageBilling}
+                            className="btn-secondary plan-btn"
+                            disabled={actionLoading === 'portal'}
+                          >
+                            {actionLoading === 'portal' ? 'Loading...' : 'Switch to ' + (billingPeriod === 'monthly' ? 'Monthly' : 'Annual')}
+                          </button>
+                        </>
                       ) : currentTier === 'premium' ? (
                         <span className="plan-downgrade-note">Downgrade via billing portal</span>
                       ) : (
@@ -291,7 +310,7 @@ export default function Account() {
                   </div>
 
                   {/* Premium Plan Card - $200/month */}
-                  <div className={`plan-card premium ${currentTier === 'premium' ? 'current' : ''}`}>
+                  <div className={`plan-card premium ${currentTier === 'premium' && billingMatches ? 'current' : ''}`}>
                     <div className="plan-header">
                       <h3><SparkleIcon /> Premium</h3>
                       <div className="plan-price">
@@ -309,7 +328,7 @@ export default function Account() {
                       <li><CheckIcon /> Dedicated support</li>
                     </ul>
                     <div className="plan-action">
-                      {currentTier === 'premium' ? (
+                      {currentTier === 'premium' && billingMatches ? (
                         <>
                           <span className="plan-current-label">Current Plan</span>
                           {subscription?.billingInterval && (
@@ -326,6 +345,19 @@ export default function Account() {
                             disabled={actionLoading === 'portal'}
                           >
                             {actionLoading === 'portal' ? 'Loading...' : 'Manage Billing'}
+                          </button>
+                        </>
+                      ) : currentTier === 'premium' && !billingMatches ? (
+                        <>
+                          <span className="plan-switch-note">
+                            You're on {userBillingInterval} billing
+                          </span>
+                          <button
+                            onClick={handleManageBilling}
+                            className="btn-secondary plan-btn"
+                            disabled={actionLoading === 'portal'}
+                          >
+                            {actionLoading === 'portal' ? 'Loading...' : 'Switch to ' + (billingPeriod === 'monthly' ? 'Monthly' : 'Annual')}
                           </button>
                         </>
                       ) : (

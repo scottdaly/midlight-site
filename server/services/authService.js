@@ -175,11 +175,11 @@ export function findOrCreateOAuthUser({ provider, providerUserId, email, display
 
 export function getUserSubscription(userId) {
   const stmt = db.prepare(`
-    SELECT tier, status, current_period_start, current_period_end, created_at
+    SELECT tier, status, billing_interval, current_period_start, current_period_end, created_at
     FROM subscriptions
     WHERE user_id = ?
   `);
-  return stmt.get(userId) || { tier: 'free', status: 'active' };
+  return stmt.get(userId) || { tier: 'free', status: 'active', billing_interval: null };
 }
 
 export function updateSubscription(userId, updates) {
