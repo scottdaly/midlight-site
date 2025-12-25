@@ -1336,12 +1336,13 @@ nav {
 }
 
 .billing-save-badge {
-  background: linear-gradient(135deg, #22c55e, #16a34a);
-  color: white;
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
   font-size: 0.7rem;
   font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  border-radius: 10px;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(139, 92, 246, 0.3);
 }
 
 .plan-cards {
