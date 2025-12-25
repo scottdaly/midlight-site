@@ -4,19 +4,21 @@ import { getUserSubscription } from '../authService.js';
 // Quota limits by tier
 const LIMITS = {
   free: 100,      // requests per month
-  premium: Infinity
+  premium: Infinity,
+  pro: Infinity
 };
 
 // Rate limits by tier (requests per minute)
 const RATE_LIMITS = {
   free: 10,
-  premium: 30
+  premium: 30,
+  pro: 60
 };
 
 export async function checkQuota(userId) {
   const subscription = getUserSubscription(userId);
   const tier = subscription?.tier || 'free';
-  const limit = LIMITS[tier];
+  const limit = LIMITS[tier] ?? LIMITS.free; // Fallback to free tier if unknown
 
   if (limit === Infinity) {
     return {
@@ -82,7 +84,7 @@ export function getUsageStats(userId) {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const subscription = getUserSubscription(userId);
   const tier = subscription?.tier || 'free';
-  const limit = LIMITS[tier];
+  const limit = LIMITS[tier] ?? LIMITS.free; // Fallback to free tier if unknown
 
   // Get monthly rollup
   const rollupStmt = db.prepare(`
