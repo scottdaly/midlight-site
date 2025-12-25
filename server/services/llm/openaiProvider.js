@@ -113,7 +113,8 @@ export async function chatWithTools({
   messages,
   tools,
   temperature = 0.7,
-  maxTokens = 4096
+  maxTokens = 4096,
+  webSearchEnabled = false
 }) {
   const params = {
     model,
@@ -133,6 +134,12 @@ export async function chatWithTools({
   if (!NO_TEMPERATURE_MODELS.includes(model)) {
     params.temperature = temperature;
   }
+
+  // Note: OpenAI web search requires either:
+  // 1. Using dedicated search models (gpt-4o-search-preview)
+  // 2. Using the Responses API with web_search_preview tool
+  // For now, webSearchEnabled is accepted but not implemented for OpenAI
+  // TODO: Implement OpenAI web search when using compatible models
 
   const response = await client.chat.completions.create(params);
 
@@ -158,6 +165,7 @@ export async function chatWithTools({
     model: response.model,
     content: message?.content || '',
     toolCalls: toolCalls || [],
+    webSearches: undefined, // OpenAI web search not yet implemented
     finishReason: response.choices[0]?.finish_reason,
     usage: {
       promptTokens: response.usage?.prompt_tokens || 0,

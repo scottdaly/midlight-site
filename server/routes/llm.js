@@ -142,7 +142,8 @@ router.post('/chat-with-tools', [
   body('tools').isArray({ min: 1 }).withMessage('Tools array required'),
   body('tools.*.name').notEmpty().withMessage('Tool name required'),
   body('tools.*.description').notEmpty().withMessage('Tool description required'),
-  body('tools.*.parameters').isObject().withMessage('Tool parameters required')
+  body('tools.*.parameters').isObject().withMessage('Tool parameters required'),
+  body('webSearchEnabled').optional().isBoolean()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -156,7 +157,8 @@ router.post('/chat-with-tools', [
       messages,
       tools,
       temperature = 0.7,
-      maxTokens = 4096
+      maxTokens = 4096,
+      webSearchEnabled = false
     } = req.body;
 
     // Check if model is allowed
@@ -174,7 +176,8 @@ router.post('/chat-with-tools', [
       messages,
       tools,
       temperature,
-      maxTokens
+      maxTokens,
+      webSearchEnabled
     });
 
     res.json(response);

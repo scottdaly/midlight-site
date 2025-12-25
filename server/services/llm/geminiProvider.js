@@ -140,27 +140,60 @@ async function* streamChat(generativeModel, contents) {
   };
 }
 
+// Maximum number of search results to return
+const MAX_SEARCH_RESULTS = 10;
+
+// Validate URL is http/https
+function isValidHttpUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export async function chatWithTools({
   model,
   messages,
   tools,
   temperature = 0.7,
-  maxTokens = 4096
+  maxTokens = 4096,
+  webSearchEnabled = false
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
   const geminiTools = convertTools(tools);
 
+  // Build tools array - include function tools and optionally Google Search
+  const allTools = [];
+  if (geminiTools) {
+    allTools.push(geminiTools);
+  }
+  if (webSearchEnabled) {
+    // Enable Google Search grounding
+    allTools.push({ googleSearch: {} });
+  }
+
   const generativeModel = genAI.getGenerativeModel({
     model,
     ...(systemInstruction && { systemInstruction }),
-    ...(geminiTools && { tools: [geminiTools] }),
+    ...(allTools.length > 0 && { tools: allTools }),
     generationConfig: {
       temperature,
       maxOutputTokens: maxTokens
     }
   });
 
-  const result = await generativeModel.generateContent({ contents });
+  let result;
+  try {
+    result = await generativeModel.generateContent({ contents });
+  } catch (error) {
+    const normalizedError = new Error(error.message || 'Gemini request failed');
+    normalizedError.code = error.code || 'PROVIDER_ERROR';
+    normalizedError.provider = 'gemini';
+    throw normalizedError;
+  }
+
   const response = result.response;
   const candidate = response.candidates?.[0];
 
@@ -183,6 +216,34 @@ export async function chatWithTools({
     }
   }
 
+  // Extract web search grounding metadata if available
+  const webSearches = [];
+  const groundingMetadata = candidate?.groundingMetadata;
+  if (groundingMetadata?.groundingChunks && Array.isArray(groundingMetadata.groundingChunks)) {
+    // Gemini returns grounding chunks with web sources
+    // Filter with proper null checks and URL validation
+    const sources = groundingMetadata.groundingChunks
+      .filter(chunk =>
+        chunk &&
+        chunk.web &&
+        typeof chunk.web.uri === 'string' &&
+        isValidHttpUrl(chunk.web.uri)
+      )
+      .slice(0, MAX_SEARCH_RESULTS)
+      .map(chunk => ({
+        url: chunk.web.uri,
+        title: chunk.web.title || '',
+        snippet: ''
+      }));
+
+    if (sources.length > 0) {
+      webSearches.push({
+        query: groundingMetadata.webSearchQueries?.[0] || 'Google Search',
+        results: sources
+      });
+    }
+  }
+
   const usageMetadata = response.usageMetadata || {};
 
   return {
@@ -191,6 +252,7 @@ export async function chatWithTools({
     model,
     content: textContent,
     toolCalls,
+    webSearches: webSearches.length > 0 ? webSearches : undefined,
     finishReason: candidate?.finishReason || 'stop',
     usage: {
       promptTokens: usageMetadata.promptTokenCount || 0,

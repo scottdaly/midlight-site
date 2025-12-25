@@ -124,6 +124,9 @@ async function* streamWithTracking({
   }
 }
 
+// Providers that support native web search
+const WEB_SEARCH_PROVIDERS = ['anthropic', 'gemini'];
+
 export async function chatWithTools({
   userId,
   provider,
@@ -132,7 +135,8 @@ export async function chatWithTools({
   tools,
   temperature = 0.7,
   maxTokens = 4096,
-  requestType = 'agent'
+  requestType = 'agent',
+  webSearchEnabled = false
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -150,18 +154,28 @@ export async function chatWithTools({
     throw new Error(`Provider ${provider} is not configured`);
   }
 
+  // Check if provider supports web search
+  const webSearchSupported = WEB_SEARCH_PROVIDERS.includes(provider);
+  const effectiveWebSearchEnabled = webSearchEnabled && webSearchSupported;
+
   const response = await providerService.chatWithTools({
     model,
     messages,
     tools,
     temperature,
-    maxTokens
+    maxTokens,
+    webSearchEnabled: effectiveWebSearchEnabled
   });
 
   // Track usage
   await trackUsage(userId, provider, model, response.usage, requestType);
 
-  return response;
+  // Include web search support info in response
+  return {
+    ...response,
+    webSearchSupported,
+    webSearchRequested: webSearchEnabled
+  };
 }
 
 export function getAvailableModels(tier = 'free') {
