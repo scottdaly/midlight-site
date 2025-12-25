@@ -12,9 +12,12 @@ export const stripe = stripeSecretKey
   : null;
 
 // Stripe price IDs for subscription tiers
+// Pro = $20/month, Premium = $200/month
 export const STRIPE_PRICES = {
-  premium_monthly: process.env.STRIPE_PRICE_MONTHLY,
-  premium_yearly: process.env.STRIPE_PRICE_YEARLY,
+  pro_monthly: process.env.STRIPE_PRICE_PRO_MONTHLY,
+  pro_yearly: process.env.STRIPE_PRICE_PRO_YEARLY,
+  premium_monthly: process.env.STRIPE_PRICE_PREMIUM_MONTHLY,
+  premium_yearly: process.env.STRIPE_PRICE_PREMIUM_YEARLY,
 };
 
 // Webhook secret for verifying Stripe events
@@ -27,6 +30,9 @@ export function isStripeConfigured() {
 
 // Map Stripe price IDs to internal tier names
 export function getPlanFromPriceId(priceId) {
+  if (priceId === STRIPE_PRICES.pro_monthly || priceId === STRIPE_PRICES.pro_yearly) {
+    return 'pro';
+  }
   if (priceId === STRIPE_PRICES.premium_monthly || priceId === STRIPE_PRICES.premium_yearly) {
     return 'premium';
   }
@@ -35,7 +41,7 @@ export function getPlanFromPriceId(priceId) {
 
 // Get billing interval from price ID
 export function getBillingInterval(priceId) {
-  if (priceId === STRIPE_PRICES.premium_yearly) {
+  if (priceId === STRIPE_PRICES.premium_yearly || priceId === STRIPE_PRICES.pro_yearly) {
     return 'yearly';
   }
   return 'monthly';

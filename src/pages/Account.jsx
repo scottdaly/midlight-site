@@ -33,6 +33,7 @@ export default function Account() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [billingPeriod, setBillingPeriod] = useState('monthly');
 
   // Fetch account data
   useEffect(() => {
@@ -140,7 +141,9 @@ export default function Account() {
     }
   };
 
+  const isPro = subscription?.tier === 'pro' && subscription?.status === 'active';
   const isPremium = subscription?.tier === 'premium' && subscription?.status === 'active';
+  const currentTier = isPremium ? 'premium' : isPro ? 'pro' : 'free';
   const usagePercent = usage?.quota?.limit
     ? Math.min((usage.quota.used / usage.quota.limit) * 100, 100)
     : 0;
@@ -188,17 +191,37 @@ export default function Account() {
                 <h2>Subscription</h2>
                 {subscription?.status === 'cancelled' && (
                   <p className="subscription-cancelled-note">
-                    Your Premium subscription will end on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    Your subscription will end on {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
                   </p>
                 )}
+
+                {/* Billing Period Toggle */}
+                <div className="billing-toggle-wrapper">
+                  <div className="billing-toggle">
+                    <button
+                      className={`billing-segment ${billingPeriod === 'monthly' ? 'active' : ''}`}
+                      onClick={() => setBillingPeriod('monthly')}
+                    >
+                      Monthly
+                    </button>
+                    <button
+                      className={`billing-segment ${billingPeriod === 'annual' ? 'active' : ''}`}
+                      onClick={() => setBillingPeriod('annual')}
+                    >
+                      Annual
+                      <span className="billing-save-badge">Save 25%</span>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="plan-cards">
                   {/* Free Plan Card */}
-                  <div className={`plan-card ${!isPremium ? 'current' : ''}`}>
+                  <div className={`plan-card ${currentTier === 'free' ? 'current' : ''}`}>
                     <div className="plan-header">
                       <h3>Free</h3>
                       <div className="plan-price">
                         <span className="price-amount">$0</span>
-                        <span className="price-period">/month</span>
+                        <span className="price-period">/{billingPeriod === 'monthly' ? 'month' : 'year'}</span>
                       </div>
                     </div>
                     <ul className="plan-features">
@@ -208,7 +231,7 @@ export default function Account() {
                       <li><CheckIcon /> All editor features</li>
                     </ul>
                     <div className="plan-action">
-                      {!isPremium ? (
+                      {currentTier === 'free' ? (
                         <span className="plan-current-label">Current Plan</span>
                       ) : (
                         <span className="plan-downgrade-note">Downgrade via billing portal</span>
@@ -216,16 +239,18 @@ export default function Account() {
                     </div>
                   </div>
 
-                  {/* Premium Plan Card */}
-                  <div className={`plan-card premium ${isPremium ? 'current' : ''}`}>
+                  {/* Pro Plan Card - $20/month */}
+                  <div className={`plan-card pro ${currentTier === 'pro' ? 'current' : ''}`}>
                     <div className="plan-badge">Most Popular</div>
                     <div className="plan-header">
-                      <h3><SparkleIcon /> Premium</h3>
+                      <h3><SparkleIcon /> Pro</h3>
                       <div className="plan-price">
-                        <span className="price-amount">$20</span>
-                        <span className="price-period">/month</span>
+                        <span className="price-amount">${billingPeriod === 'monthly' ? '20' : '180'}</span>
+                        <span className="price-period">/{billingPeriod === 'monthly' ? 'month' : 'year'}</span>
                       </div>
-                      <div className="plan-price-alt">or $180/year (save 25%)</div>
+                      {billingPeriod === 'annual' && (
+                        <div className="plan-price-alt">$15/month billed annually</div>
+                      )}
                     </div>
                     <ul className="plan-features">
                       <li><CheckIcon /> Unlimited AI queries</li>
@@ -234,7 +259,59 @@ export default function Account() {
                       <li><CheckIcon /> Early access to new features</li>
                     </ul>
                     <div className="plan-action">
-                      {isPremium ? (
+                      {currentTier === 'pro' ? (
+                        <>
+                          <span className="plan-current-label">Current Plan</span>
+                          {subscription?.billingInterval && (
+                            <p className="plan-billing-info">
+                              Billed {subscription.billingInterval}
+                              {subscription.currentPeriodEnd && (
+                                <> &middot; Renews {new Date(subscription.currentPeriodEnd).toLocaleDateString()}</>
+                              )}
+                            </p>
+                          )}
+                          <button
+                            onClick={handleManageBilling}
+                            className="btn-secondary plan-btn"
+                            disabled={actionLoading === 'portal'}
+                          >
+                            {actionLoading === 'portal' ? 'Loading...' : 'Manage Billing'}
+                          </button>
+                        </>
+                      ) : currentTier === 'premium' ? (
+                        <span className="plan-downgrade-note">Downgrade via billing portal</span>
+                      ) : (
+                        <button
+                          onClick={() => handleUpgrade(billingPeriod === 'monthly' ? 'pro_monthly' : 'pro_yearly')}
+                          className="btn-primary plan-btn"
+                          disabled={actionLoading === 'upgrade'}
+                        >
+                          {actionLoading === 'upgrade' ? 'Loading...' : 'Upgrade to Pro'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Premium Plan Card - $200/month */}
+                  <div className={`plan-card premium ${currentTier === 'premium' ? 'current' : ''}`}>
+                    <div className="plan-header">
+                      <h3><SparkleIcon /> Premium</h3>
+                      <div className="plan-price">
+                        <span className="price-amount">${billingPeriod === 'monthly' ? '200' : '2,000'}</span>
+                        <span className="price-period">/{billingPeriod === 'monthly' ? 'month' : 'year'}</span>
+                      </div>
+                      {billingPeriod === 'annual' && (
+                        <div className="plan-price-alt">$167/month billed annually</div>
+                      )}
+                    </div>
+                    <ul className="plan-features">
+                      <li><CheckIcon /> Everything in Pro</li>
+                      <li><CheckIcon /> Higher rate limits</li>
+                      <li><CheckIcon /> Team collaboration</li>
+                      <li><CheckIcon /> Dedicated support</li>
+                    </ul>
+                    <div className="plan-action">
+                      {currentTier === 'premium' ? (
                         <>
                           <span className="plan-current-label">Current Plan</span>
                           {subscription?.billingInterval && (
@@ -254,22 +331,13 @@ export default function Account() {
                           </button>
                         </>
                       ) : (
-                        <div className="plan-upgrade-buttons">
-                          <button
-                            onClick={() => handleUpgrade('monthly')}
-                            className="btn-primary plan-btn"
-                            disabled={actionLoading === 'upgrade'}
-                          >
-                            {actionLoading === 'upgrade' ? 'Loading...' : 'Upgrade Monthly'}
-                          </button>
-                          <button
-                            onClick={() => handleUpgrade('yearly')}
-                            className="btn-secondary plan-btn"
-                            disabled={actionLoading === 'upgrade'}
-                          >
-                            Upgrade Yearly
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleUpgrade(billingPeriod === 'monthly' ? 'premium_monthly' : 'premium_yearly')}
+                          className="btn-secondary plan-btn"
+                          disabled={actionLoading === 'upgrade'}
+                        >
+                          {actionLoading === 'upgrade' ? 'Loading...' : 'Upgrade to Premium'}
+                        </button>
                       )}
                     </div>
                   </div>

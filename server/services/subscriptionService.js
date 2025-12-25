@@ -40,9 +40,25 @@ export async function createCheckoutSession(userId, priceType = 'monthly', succe
     throw new Error('Stripe is not configured');
   }
 
-  const priceId = priceType === 'yearly'
-    ? STRIPE_PRICES.premium_yearly
-    : STRIPE_PRICES.premium_monthly;
+  // Map priceType to the correct Stripe price ID
+  let priceId;
+  switch (priceType) {
+    case 'pro_yearly':
+      priceId = STRIPE_PRICES.pro_yearly;
+      break;
+    case 'pro_monthly':
+      priceId = STRIPE_PRICES.pro_monthly;
+      break;
+    case 'premium_yearly':
+    case 'yearly':
+      priceId = STRIPE_PRICES.premium_yearly;
+      break;
+    case 'premium_monthly':
+    case 'monthly':
+    default:
+      priceId = STRIPE_PRICES.premium_monthly;
+      break;
+  }
 
   if (!priceId) {
     throw new Error(`Stripe price ID not configured for ${priceType} plan`);
@@ -258,7 +274,16 @@ export function getSubscriptionStatus(userId) {
 }
 
 /**
- * Check if user has active premium subscription
+ * Check if user has active pro subscription ($20/month tier)
+ */
+export function isProUser(userId) {
+  const subscription = getSubscriptionStatus(userId);
+  return (subscription.tier === 'pro' || subscription.tier === 'premium') &&
+         (subscription.status === 'active' || subscription.status === 'trialing');
+}
+
+/**
+ * Check if user has active premium subscription ($200/month tier)
  */
 export function isPremiumUser(userId) {
   const subscription = getSubscriptionStatus(userId);

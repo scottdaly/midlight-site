@@ -32,7 +32,7 @@ router.post(
   '/checkout',
   requireAuth,
   [
-    body('priceType').isIn(['monthly', 'yearly']).withMessage('Invalid price type'),
+    body('priceType').isIn(['monthly', 'yearly', 'premium_monthly', 'premium_yearly', 'pro_monthly', 'pro_yearly']).withMessage('Invalid price type'),
     body('successUrl').isURL().withMessage('Invalid success URL'),
     body('cancelUrl').isURL().withMessage('Invalid cancel URL'),
   ],
