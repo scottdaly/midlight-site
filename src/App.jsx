@@ -6,6 +6,7 @@ import Download from './pages/Download';
 import AdminErrors from './pages/AdminErrors';
 import Auth from './pages/Auth';
 import Account from './pages/Account';
+import CheckoutResult from './pages/CheckoutResult';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -181,6 +182,8 @@ function App() {
               }
             />
             <Route path="/admin/errors" element={<AdminErrors />} />
+            <Route path="/checkout/success" element={<CheckoutResult />} />
+            <Route path="/checkout/cancel" element={<CheckoutResult />} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>

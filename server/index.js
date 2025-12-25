@@ -190,9 +190,18 @@ app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/subscription', subscriptionRouter);
 
-// Serve static files from frontend in production (optional, if not using Nginx for static)
-// Since the prompt mentions Nginx will proxy /api -> localhost:3001, we might not need to serve static here.
-// But it's good practice for a standalone test.
+// Serve static files from frontend in production
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
+
+// SPA fallback - serve index.html for all non-API routes (client-side routing)
+app.get('*', (req, res) => {
+  // Don't serve index.html for API routes
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  res.sendFile(path.join(distPath, 'index.html'));
+});
 
 // Cleanup expired sessions periodically (every hour)
 setInterval(() => {
