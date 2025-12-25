@@ -164,13 +164,21 @@ export async function chatWithTools({
   const { systemInstruction, contents } = convertMessages(messages);
   const geminiTools = convertTools(tools);
 
-  // Build tools array - include function tools and optionally Google Search
+  // Gemini 3 models don't support combining built-in tools (Google Search) with function calling
+  // They're mutually exclusive - prioritize custom tools when both are requested
+  const isGemini3 = model.startsWith('gemini-3');
+  const hasCustomTools = geminiTools && geminiTools.functionDeclarations?.length > 0;
+
+  // Build tools array
   const allTools = [];
-  if (geminiTools) {
+  if (hasCustomTools) {
     allTools.push(geminiTools);
+    // For Gemini 3, we can't add Google Search when using custom tools
   }
-  if (webSearchEnabled) {
-    // Enable Google Search grounding
+  if (webSearchEnabled && !(isGemini3 && hasCustomTools)) {
+    // Only add Google Search if:
+    // - Not Gemini 3, OR
+    // - Gemini 3 but no custom tools
     allTools.push({ googleSearch: {} });
   }
 

@@ -127,6 +127,23 @@ async function* streamWithTracking({
 // Providers that support native web search
 const WEB_SEARCH_PROVIDERS = ['anthropic', 'gemini'];
 
+// Haiku model for fast/cheap search pass
+const SEARCH_MODEL = 'claude-haiku-4-5-20251001';
+
+// Format search results as context for injection
+function formatSearchResultsAsContext(webSearches) {
+  if (!webSearches || webSearches.length === 0) return '';
+
+  const parts = [];
+  for (const search of webSearches) {
+    parts.push(`Search query: "${search.query}"`);
+    for (const result of search.results || []) {
+      parts.push(`- ${result.title}: ${result.snippet || result.url}`);
+    }
+  }
+  return parts.join('\n');
+}
+
 export async function chatWithTools({
   userId,
   provider,
@@ -154,13 +171,64 @@ export async function chatWithTools({
     throw new Error(`Provider ${provider} is not configured`);
   }
 
-  // Check if provider supports web search
+  // Check if we need hybrid search approach
+  // Gemini 3 can't combine Google Search with function calling
+  const isGemini3 = provider === 'gemini' && model.startsWith('gemini-3');
+  const hasCustomTools = tools && tools.length > 0;
+  const needsHybridSearch = webSearchEnabled && isGemini3 && hasCustomTools && anthropicProvider.isConfigured();
+
+  let webSearchResults = [];
+  let messagesWithSearch = messages;
+
+  if (needsHybridSearch) {
+    // Step 1: Do web search with Anthropic (fast Haiku model)
+    try {
+      const searchResponse = await anthropicProvider.chatWithTools({
+        model: SEARCH_MODEL,
+        messages,
+        tools: [], // No custom tools, just web search
+        temperature: 0.3,
+        maxTokens: 1024,
+        webSearchEnabled: true
+      });
+
+      // Track the search usage separately
+      if (searchResponse.usage) {
+        await trackUsage(userId, 'anthropic', SEARCH_MODEL, searchResponse.usage, 'search');
+      }
+
+      // Extract web search results
+      if (searchResponse.webSearches?.length > 0) {
+        webSearchResults = searchResponse.webSearches;
+
+        // Inject search results into context for the main model
+        const searchContext = formatSearchResultsAsContext(webSearchResults);
+        if (searchContext) {
+          // Add search results to the last user message
+          const lastMsgIndex = messages.length - 1;
+          messagesWithSearch = [
+            ...messages.slice(0, lastMsgIndex),
+            {
+              ...messages[lastMsgIndex],
+              content: `${messages[lastMsgIndex].content}\n\n<web_search_results>\n${searchContext}\n</web_search_results>`
+            }
+          ];
+        }
+      }
+    } catch (error) {
+      // Log but don't fail - continue without search results
+      console.warn('[LLM] Hybrid search failed, continuing without:', error.message);
+    }
+  }
+
+  // Check if provider supports web search (for non-hybrid case)
   const webSearchSupported = WEB_SEARCH_PROVIDERS.includes(provider);
-  const effectiveWebSearchEnabled = webSearchEnabled && webSearchSupported;
+  // For hybrid search, we've already done the search; for Gemini 3 with tools, disable native search
+  const effectiveWebSearchEnabled = needsHybridSearch ? false : (webSearchEnabled && webSearchSupported && !(isGemini3 && hasCustomTools));
 
   const response = await providerService.chatWithTools({
     model,
-    messages,
+    messages: messagesWithSearch,
     tools,
     temperature,
     maxTokens,
@@ -170,10 +238,16 @@ export async function chatWithTools({
   // Track usage
   await trackUsage(userId, provider, model, response.usage, requestType);
 
+  // Combine web search results: use hybrid results if available, otherwise provider's results
+  const combinedWebSearches = webSearchResults.length > 0
+    ? webSearchResults
+    : response.webSearches;
+
   // Include web search support info in response
   return {
     ...response,
-    webSearchSupported,
+    webSearches: combinedWebSearches,
+    webSearchSupported: webSearchSupported || needsHybridSearch,
     webSearchRequested: webSearchEnabled
   };
 }
