@@ -346,10 +346,10 @@ export default function Account() {
               <section className="account-section">
                 <h2>Usage This Month</h2>
                 <div className="account-card">
-                  {isPremium ? (
+                  {isPro || isPremium ? (
                     <div className="usage-unlimited">
                       <CheckIcon />
-                      <span>Unlimited queries with Premium</span>
+                      <span>Unlimited queries with {isPremium ? 'Premium' : 'Pro'}</span>
                     </div>
                   ) : (
                     <>

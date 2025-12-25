@@ -127,11 +127,14 @@ router.get('/subscription', (req, res) => {
     const subscription = getUserSubscription(req.user.id);
 
     res.json({
-      tier: subscription.tier,
-      status: subscription.status,
-      currentPeriodStart: subscription.current_period_start,
-      currentPeriodEnd: subscription.current_period_end,
-      createdAt: subscription.created_at
+      subscription: {
+        tier: subscription.tier,
+        status: subscription.status,
+        billingInterval: subscription.billing_interval || null,
+        currentPeriodStart: subscription.current_period_start,
+        currentPeriodEnd: subscription.current_period_end,
+        createdAt: subscription.created_at
+      }
     });
   } catch (error) {
     console.error('Get subscription error:', error);
@@ -155,6 +158,7 @@ router.get('/usage', (req, res) => {
     // Get limit based on tier
     const limits = {
       free: 100,
+      pro: Infinity,
       premium: Infinity
     };
     const limit = limits[req.subscription.tier] || limits.free;
@@ -171,17 +175,21 @@ router.get('/usage', (req, res) => {
     `);
     const breakdown = breakdownStmt.all(req.user.id);
 
+    const used = rollup?.request_count || 0;
+    const remaining = limit === Infinity ? null : Math.max(0, limit - used);
+
     res.json({
       month: currentMonth,
-      requestCount: rollup?.request_count || 0,
-      totalTokens: rollup?.total_tokens || 0,
-      limit: limit === Infinity ? null : limit,
-      remaining: limit === Infinity ? null : Math.max(0, limit - (rollup?.request_count || 0)),
       tier: req.subscription.tier,
-      breakdown: breakdown.reduce((acc, row) => {
+      quota: {
+        used,
+        limit: limit === Infinity ? null : limit,
+        remaining
+      },
+      byProvider: breakdown.reduce((acc, row) => {
         acc[row.provider] = {
-          requestCount: row.request_count,
-          totalTokens: row.total_tokens
+          requests: row.request_count,
+          tokens: row.total_tokens
         };
         return acc;
       }, {})
