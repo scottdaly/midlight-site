@@ -10,6 +10,7 @@ import {
 } from '../services/authService.js';
 import {
   generateTokenPair,
+  generateAccessToken,
   validateSession,
   invalidateSession,
   generateExchangeCode,
@@ -273,6 +274,8 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
 });
 
 // POST /api/auth/refresh
+// Note: We don't rotate the refresh token on every refresh to avoid session loss
+// if the browser fails to save the new cookie. Token rotation only happens on login.
 router.post('/refresh', refreshLimiter, (req, res) => {
   try {
     const refreshToken = req.cookies?.refreshToken;
@@ -295,15 +298,8 @@ router.post('/refresh', refreshLimiter, (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Invalidate old session
-    invalidateSession(refreshToken);
-
-    // Generate new token pair
-    const { userAgent, ipHash } = getClientInfo(req);
-    const tokens = generateTokenPair(session.user_id, userAgent, ipHash);
-
-    // Set new refresh token cookie
-    setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    // Generate only a new access token - keep the same refresh token
+    const accessToken = generateAccessToken(session.user_id);
 
     res.json({
       user: {
@@ -312,8 +308,8 @@ router.post('/refresh', refreshLimiter, (req, res) => {
         displayName: user.display_name,
         avatarUrl: user.avatar_url
       },
-      accessToken: tokens.accessToken,
-      expiresIn: tokens.expiresIn
+      accessToken,
+      expiresIn: 15 * 60 // 15 minutes
     });
   } catch (error) {
     console.error('Token refresh error:', error);
