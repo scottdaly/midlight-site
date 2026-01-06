@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
 import passport from 'passport';
+import { logger } from '../utils/logger.js';
 import {
   findUserByEmail,
   findUserById,
@@ -216,7 +217,7 @@ router.post('/signup', signupLimiter, signupValidation, async (req, res) => {
       expiresIn: tokens.expiresIn
     });
   } catch (error) {
-    console.error('Signup error:', error);
+    logger.error({ error: error?.message || error }, 'Signup error');
     res.status(500).json({ error: 'Failed to create account' });
   }
 });
@@ -268,7 +269,7 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
       expiresIn: tokens.expiresIn
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error({ error: error?.message || error }, 'Login error');
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -312,7 +313,7 @@ router.post('/refresh', refreshLimiter, (req, res) => {
       expiresIn: 15 * 60 // 15 minutes
     });
   } catch (error) {
-    console.error('Token refresh error:', error);
+    logger.error({ error: error?.message || error }, 'Token refresh error');
     res.status(500).json({ error: 'Token refresh failed' });
   }
 });
@@ -329,7 +330,7 @@ router.post('/logout', (req, res) => {
     res.clearCookie('refreshToken', { path: '/api/auth' });
     res.json({ success: true });
   } catch (error) {
-    console.error('Logout error:', error);
+    logger.error({ error: error?.message || error }, 'Logout error');
     res.status(500).json({ error: 'Logout failed' });
   }
 });
@@ -353,13 +354,13 @@ router.get('/google/callback', (req, res, next) => {
   // Validate state before processing callback
   const stateData = validateOAuthState(req.query.state);
   if (!stateData) {
-    console.error('Google auth error: Invalid or expired OAuth state');
+    logger.error({ error: 'Invalid or expired OAuth state' }, 'Google auth error');
     return res.redirect(`${WEB_REDIRECT_BASE}/login?error=invalid_state`);
   }
 
   passport.authenticate('google', { session: false }, (err, user) => {
     if (err || !user) {
-      console.error('Google auth error:', err);
+      logger.error({ error: err?.message || err }, 'Google auth error');
       if (stateData.isDesktop) {
         // Dev mode: redirect to local HTTP server
         if (stateData.devCallbackPort) {
@@ -407,15 +408,27 @@ router.post('/exchange', (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired code' });
     }
 
+    // Get user data
+    const user = findUserById(result.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
     // Set refresh token cookie (for future refreshes)
     setRefreshCookie(res, result.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
     res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        avatarUrl: user.avatar_url
+      },
       accessToken: result.accessToken,
       expiresIn: 15 * 60 // 15 minutes
     });
   } catch (error) {
-    console.error('Code exchange error:', error);
+    logger.error({ error: error?.message || error }, 'Code exchange error');
     res.status(500).json({ error: 'Code exchange failed' });
   }
 });

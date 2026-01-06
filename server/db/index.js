@@ -46,6 +46,18 @@ function runMigrations() {
         console.log('Migration: Added billing_interval to subscriptions table');
       }
     },
+    // Add issue_id to error_reports for linking to aggregated issues
+    {
+      name: 'add_issue_id_to_error_reports',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_reports)").all();
+        return cols.some(c => c.name === 'issue_id');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_reports ADD COLUMN issue_id INTEGER REFERENCES error_issues(id)");
+        console.log('Migration: Added issue_id to error_reports table');
+      }
+    },
   ];
 
   for (const migration of migrations) {

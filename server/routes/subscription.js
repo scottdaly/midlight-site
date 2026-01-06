@@ -7,8 +7,49 @@ import {
   createPortalSession,
   getSubscriptionStatus,
 } from '../services/subscriptionService.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
+
+// Allowed redirect URL origins to prevent open redirect attacks
+const ALLOWED_REDIRECT_ORIGINS = [
+  process.env.FRONTEND_URL,
+  'https://midlight.ai',
+  'https://www.midlight.ai',
+  // Allow localhost for development
+  ...(process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173']
+    : []),
+].filter(Boolean);
+
+/**
+ * Validates that a redirect URL is from an allowed origin
+ * Prevents open redirect attacks via Stripe checkout
+ */
+function validateRedirectUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return ALLOWED_REDIRECT_ORIGINS.some((origin) => {
+      if (origin === parsed.origin) return true;
+      // Support wildcard subdomains if needed
+      if (origin.startsWith('*.')) {
+        const domain = origin.slice(2);
+        return parsed.hostname.endsWith(domain);
+      }
+      return false;
+    });
+  } catch {
+    return false;
+  }
+}
+
+// Custom validator for redirect URLs
+const isAllowedRedirectUrl = (value) => {
+  if (!validateRedirectUrl(value)) {
+    throw new Error('Redirect URL origin not allowed');
+  }
+  return true;
+};
 
 /**
  * GET /api/subscription/status
@@ -19,7 +60,7 @@ router.get('/status', requireAuth, async (req, res) => {
     const status = getSubscriptionStatus(req.user.id);
     res.json(status);
   } catch (error) {
-    console.error('Error getting subscription status:', error);
+    logger.error({ error: error?.message || error }, 'Error getting subscription status');
     res.status(500).json({ error: 'Failed to get subscription status' });
   }
 });
@@ -33,8 +74,8 @@ router.post(
   requireAuth,
   [
     body('priceType').isIn(['monthly', 'yearly', 'premium_monthly', 'premium_yearly', 'pro_monthly', 'pro_yearly']).withMessage('Invalid price type'),
-    body('successUrl').isURL().withMessage('Invalid success URL'),
-    body('cancelUrl').isURL().withMessage('Invalid cancel URL'),
+    body('successUrl').isURL().withMessage('Invalid success URL').custom(isAllowedRedirectUrl),
+    body('cancelUrl').isURL().withMessage('Invalid cancel URL').custom(isAllowedRedirectUrl),
   ],
   async (req, res) => {
     if (!isStripeConfigured()) {
@@ -58,7 +99,7 @@ router.post(
 
       res.json({ url: session.url, sessionId: session.id });
     } catch (error) {
-      console.error('Error creating checkout session:', error);
+      logger.error({ error: error?.message || error }, 'Error creating checkout session');
       res.status(500).json({ error: 'Failed to create checkout session' });
     }
   }
@@ -72,7 +113,7 @@ router.post(
   '/portal',
   requireAuth,
   [
-    body('returnUrl').isURL().withMessage('Invalid return URL'),
+    body('returnUrl').isURL().withMessage('Invalid return URL').custom(isAllowedRedirectUrl),
   ],
   async (req, res) => {
     if (!isStripeConfigured()) {
@@ -90,7 +131,7 @@ router.post(
 
       res.json({ url: session.url });
     } catch (error) {
-      console.error('Error creating portal session:', error);
+      logger.error({ error: error?.message || error }, 'Error creating portal session');
 
       if (error.message === 'No Stripe customer found for user') {
         return res.status(400).json({ error: 'No active subscription found' });

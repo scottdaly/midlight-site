@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
+import { logger } from '../utils/logger.js';
 import {
   findUserById,
   updateUser,
@@ -9,6 +10,11 @@ import {
 } from '../services/authService.js';
 import { invalidateAllUserSessions } from '../services/tokenService.js';
 import { requireAuth, attachSubscription } from '../middleware/auth.js';
+import {
+  checkPasswordRateLimit,
+  recordPasswordAttempt,
+  getRemainingPasswordAttempts
+} from '../middleware/rateLimiters.js';
 import db from '../db/index.js';
 
 const router = Router();
@@ -36,7 +42,7 @@ router.get('/me', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get user error:', error);
+    logger.error({ error: error?.message || error }, 'Get user error');
     res.status(500).json({ error: 'Failed to get user profile' });
   }
 });
@@ -73,7 +79,7 @@ router.patch('/me', [
       }
     });
   } catch (error) {
-    console.error('Update user error:', error);
+    logger.error({ error: error?.message || error }, 'Update user error');
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -87,6 +93,15 @@ router.post('/password', [
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
+    }
+
+    // Check rate limit before processing
+    if (!checkPasswordRateLimit(req.user.id)) {
+      const remaining = getRemainingPasswordAttempts(req.user.id);
+      return res.status(429).json({
+        error: 'Too many password change attempts. Please try again in 1 hour.',
+        remainingAttempts: remaining
+      });
     }
 
     const { currentPassword, newPassword } = req.body;
@@ -104,8 +119,16 @@ router.post('/password', [
     // Verify current password
     const { verifyPassword } = await import('../services/authService.js');
     const valid = await verifyPassword(currentPassword, user.password_hash);
+
+    // Record the attempt (success or failure)
+    recordPasswordAttempt(req.user.id, valid, req.ip);
+
     if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
+      const remaining = getRemainingPasswordAttempts(req.user.id);
+      return res.status(401).json({
+        error: 'Current password is incorrect',
+        remainingAttempts: remaining
+      });
     }
 
     // Update password
@@ -116,7 +139,7 @@ router.post('/password', [
 
     res.json({ success: true, message: 'Password updated. Please log in again.' });
   } catch (error) {
-    console.error('Password change error:', error);
+    logger.error({ error: error?.message || error }, 'Password change error');
     res.status(500).json({ error: 'Failed to change password' });
   }
 });
@@ -137,7 +160,7 @@ router.get('/subscription', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get subscription error:', error);
+    logger.error({ error: error?.message || error }, 'Get subscription error');
     res.status(500).json({ error: 'Failed to get subscription' });
   }
 });
@@ -195,7 +218,7 @@ router.get('/usage', (req, res) => {
       }, {})
     });
   } catch (error) {
-    console.error('Get usage error:', error);
+    logger.error({ error: error?.message || error }, 'Get usage error');
     res.status(500).json({ error: 'Failed to get usage' });
   }
 });
@@ -223,7 +246,7 @@ router.get('/sessions', (req, res) => {
       }))
     });
   } catch (error) {
-    console.error('Get sessions error:', error);
+    logger.error({ error: error?.message || error }, 'Get sessions error');
     res.status(500).json({ error: 'Failed to get sessions' });
   }
 });
@@ -234,7 +257,7 @@ router.delete('/sessions', (req, res) => {
     invalidateAllUserSessions(req.user.id);
     res.json({ success: true, message: 'Logged out from all devices' });
   } catch (error) {
-    console.error('Delete sessions error:', error);
+    logger.error({ error: error?.message || error }, 'Delete sessions error');
     res.status(500).json({ error: 'Failed to logout from all devices' });
   }
 });
@@ -246,7 +269,7 @@ router.delete('/me', (req, res) => {
     deleteUser(req.user.id);
     res.json({ success: true, message: 'Account deleted' });
   } catch (error) {
-    console.error('Delete user error:', error);
+    logger.error({ error: error?.message || error }, 'Delete user error');
     res.status(500).json({ error: 'Failed to delete account' });
   }
 });

@@ -33,9 +33,8 @@ export function findUserById(id) {
   return stmt.get(id);
 }
 
-export async function createUser({ email, password, displayName, avatarUrl }) {
-  const passwordHash = password ? await hashPassword(password) : null;
-
+// Transaction wrapper for creating user with subscription
+const createUserTransaction = db.transaction((email, passwordHash, displayName, avatarUrl) => {
   const stmt = db.prepare(`
     INSERT INTO users (email, password_hash, display_name, avatar_url)
     VALUES (?, ?, ?, ?)
@@ -55,18 +54,34 @@ export async function createUser({ email, password, displayName, avatarUrl }) {
   `);
   subStmt.run(result.lastInsertRowid);
 
-  return findUserById(result.lastInsertRowid);
+  return result.lastInsertRowid;
+});
+
+export async function createUser({ email, password, displayName, avatarUrl }) {
+  const passwordHash = password ? await hashPassword(password) : null;
+  const userId = createUserTransaction(email, passwordHash, displayName, avatarUrl);
+  return findUserById(userId);
 }
 
+// Explicit field mapping for user updates (prevents SQL injection via field names)
+const USER_FIELD_MAP = {
+  displayName: 'display_name',
+  avatarUrl: 'avatar_url',
+  emailVerified: 'email_verified',
+  // Also allow snake_case input for flexibility
+  display_name: 'display_name',
+  avatar_url: 'avatar_url',
+  email_verified: 'email_verified',
+};
+
 export function updateUser(userId, updates) {
-  const allowedFields = ['display_name', 'avatar_url', 'email_verified'];
   const setClauses = [];
   const values = [];
 
   for (const [key, value] of Object.entries(updates)) {
-    const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-    if (allowedFields.includes(snakeKey)) {
-      setClauses.push(`${snakeKey} = ?`);
+    const dbField = USER_FIELD_MAP[key];
+    if (dbField && value !== undefined) {
+      setClauses.push(`${dbField} = ?`);
       values.push(value);
     }
   }
@@ -92,6 +107,39 @@ export function deleteUser(userId) {
   const stmt = db.prepare('DELETE FROM users WHERE id = ?');
   return stmt.run(userId);
 }
+
+// Transaction wrapper for creating new OAuth user with subscription
+const createOAuthUserTransaction = db.transaction((email, displayName, avatarUrl, provider, providerUserId, providerData) => {
+  // Create new user
+  const userStmt = db.prepare(`
+    INSERT INTO users (email, display_name, avatar_url, email_verified)
+    VALUES (?, ?, ?, 1)
+  `);
+  const userResult = userStmt.run(email.toLowerCase(), displayName, avatarUrl);
+  const userId = userResult.lastInsertRowid;
+
+  // Create OAuth account link
+  const oauthInsertStmt = db.prepare(`
+    INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_email, provider_data)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  oauthInsertStmt.run(
+    userId,
+    provider,
+    providerUserId,
+    email,
+    JSON.stringify(providerData || {})
+  );
+
+  // Create default free subscription
+  const subStmt = db.prepare(`
+    INSERT INTO subscriptions (user_id, tier, status)
+    VALUES (?, 'free', 'active')
+  `);
+  subStmt.run(userId);
+
+  return { userId, email: email.toLowerCase(), displayName, avatarUrl };
+});
 
 export function findOrCreateOAuthUser({ provider, providerUserId, email, displayName, avatarUrl, providerData }) {
   // Check if OAuth account exists
@@ -137,39 +185,13 @@ export function findOrCreateOAuthUser({ provider, providerUserId, email, display
     };
   }
 
-  // Create new user with OAuth account
-  const userStmt = db.prepare(`
-    INSERT INTO users (email, display_name, avatar_url, email_verified)
-    VALUES (?, ?, ?, 1)
-  `);
-  const userResult = userStmt.run(email.toLowerCase(), displayName, avatarUrl);
-  const userId = userResult.lastInsertRowid;
-
-  // Create OAuth account link
-  const oauthInsertStmt = db.prepare(`
-    INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_email, provider_data)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  oauthInsertStmt.run(
-    userId,
-    provider,
-    providerUserId,
-    email,
-    JSON.stringify(providerData || {})
-  );
-
-  // Create default free subscription
-  const subStmt = db.prepare(`
-    INSERT INTO subscriptions (user_id, tier, status)
-    VALUES (?, 'free', 'active')
-  `);
-  subStmt.run(userId);
-
+  // Create new user with OAuth account (atomic transaction)
+  const result = createOAuthUserTransaction(email, displayName, avatarUrl, provider, providerUserId, providerData);
   return {
-    id: userId,
-    email: email.toLowerCase(),
-    displayName,
-    avatarUrl
+    id: result.userId,
+    email: result.email,
+    displayName: result.displayName,
+    avatarUrl: result.avatarUrl
   };
 }
 
@@ -182,15 +204,31 @@ export function getUserSubscription(userId) {
   return stmt.get(userId) || { tier: 'free', status: 'active', billing_interval: null };
 }
 
+// Explicit field mapping for subscription updates (prevents SQL injection via field names)
+const SUBSCRIPTION_FIELD_MAP = {
+  tier: 'tier',
+  status: 'status',
+  stripeCustomerId: 'stripe_customer_id',
+  stripeSubscriptionId: 'stripe_subscription_id',
+  billingInterval: 'billing_interval',
+  currentPeriodStart: 'current_period_start',
+  currentPeriodEnd: 'current_period_end',
+  // Also allow snake_case input for flexibility
+  stripe_customer_id: 'stripe_customer_id',
+  stripe_subscription_id: 'stripe_subscription_id',
+  billing_interval: 'billing_interval',
+  current_period_start: 'current_period_start',
+  current_period_end: 'current_period_end',
+};
+
 export function updateSubscription(userId, updates) {
-  const allowedFields = ['tier', 'status', 'stripe_customer_id', 'stripe_subscription_id', 'current_period_start', 'current_period_end'];
   const setClauses = [];
   const values = [];
 
   for (const [key, value] of Object.entries(updates)) {
-    const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-    if (allowedFields.includes(snakeKey)) {
-      setClauses.push(`${snakeKey} = ?`);
+    const dbField = SUBSCRIPTION_FIELD_MAP[key];
+    if (dbField && value !== undefined) {
+      setClauses.push(`${dbField} = ?`);
       values.push(value);
     }
   }

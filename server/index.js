@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import csrf from 'csurf';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { timingSafeEqual } from 'crypto';
 import passport from 'passport';
 import reportsRouter from './routes/reports.js';
 import authRouter from './routes/auth.js';
@@ -14,9 +15,18 @@ import userRouter from './routes/user.js';
 import llmRouter from './routes/llm.js';
 import subscriptionRouter from './routes/subscription.js';
 import stripeWebhookRouter from './routes/stripeWebhook.js';
+import healthRouter from './routes/health.js';
+import adminRouter from './routes/admin.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions } from './services/tokenService.js';
 import { getProviderStatus } from './services/llm/index.js';
+import {
+  errorHandler,
+  notFoundHandler,
+  setupProcessErrorHandlers
+} from './middleware/errorHandler.js';
+import { logger, requestLogger } from './utils/logger.js';
+import { CONFIG } from './config/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,9 +73,22 @@ app.use(cors(corsOptions));
 // Stripe webhook needs raw body - mount BEFORE express.json()
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }), stripeWebhookRouter);
 
-app.use(express.json());
+// Route-specific body size limits (order matters - specific routes before general)
+// LLM requests can be larger (conversations with long context)
+app.use('/api/llm', express.json({ limit: CONFIG.requestLimits.llm }));
+// Error reports can be moderately large (stack traces, context)
+app.use('/api/error-report', express.json({ limit: CONFIG.requestLimits.errorReport }));
+// Default for all other routes - smaller to prevent abuse
+app.use(express.json({ limit: CONFIG.requestLimits.json }));
 app.use(cookieParser());
 app.use(passport.initialize());
+
+// Request logging (before routes, after body parsing)
+app.use('/api', requestLogger);
+
+// Health check routes (no auth, no CSRF, no rate limiting)
+// Must be accessible to monitoring tools
+app.use(healthRouter);
 
 // CSRF Protection
 // Desktop app is exempt (identified by X-Client-Type header)
@@ -134,6 +157,24 @@ const submissionLimiter = rateLimit({
 });
 
 
+// Timing-safe string comparison to prevent timing attacks
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+
+  // Ensure both strings are the same length to prevent length-based timing attacks
+  // If lengths differ, we still do a comparison to maintain constant time
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+
+  if (aBuffer.length !== bBuffer.length) {
+    // Compare a with itself to maintain constant time, then return false
+    timingSafeEqual(aBuffer, aBuffer);
+    return false;
+  }
+
+  return timingSafeEqual(aBuffer, bBuffer);
+}
+
 // Basic Auth Middleware for Admin
 const basicAuth = (req, res, next) => {
   const ADMIN_USER = process.env.ADMIN_USER;
@@ -150,23 +191,36 @@ const basicAuth = (req, res, next) => {
 
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
     res.setHeader('WWW-Authenticate', 'Basic');
     return res.status(401).send('Authentication required');
   }
 
-  const auth = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
-  const user = auth[0];
-  const pass = auth[1];
+  try {
+    const base64 = authHeader.slice(6);
+    const decoded = Buffer.from(base64, 'base64').toString('utf-8');
+    const colonIndex = decoded.indexOf(':');
 
-  const expectedUser = ADMIN_USER || 'admin';
-  const expectedPass = ADMIN_PASS || 'midlight_secret';
+    if (colonIndex === -1) {
+      throw new Error('Invalid auth format');
+    }
 
-  if (user === expectedUser && pass === expectedPass) {
-    next();
-  } else {
+    const user = decoded.slice(0, colonIndex);
+    const pass = decoded.slice(colonIndex + 1);
+
+    const expectedUser = ADMIN_USER || 'admin';
+    const expectedPass = ADMIN_PASS || 'midlight_secret';
+
+    // Use timing-safe comparison to prevent timing attacks
+    if (safeCompare(user, expectedUser) && safeCompare(pass, expectedPass)) {
+      next();
+    } else {
+      res.setHeader('WWW-Authenticate', 'Basic');
+      return res.status(401).send('Invalid credentials');
+    }
+  } catch (error) {
     res.setHeader('WWW-Authenticate', 'Basic');
-    return res.status(401).send('Invalid credentials');
+    return res.status(401).send('Invalid authorization header');
   }
 };
 
@@ -189,26 +243,41 @@ app.use('/api/auth', authRouter);
 app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/subscription', subscriptionRouter);
+app.use('/api/admin', adminRouter);
+
+// Health check endpoints (no auth required)
+app.use('/', healthRouter);
 
 // Static files served by Caddy in production
+
+// Error handling (must be after all routes)
+app.use('/api', notFoundHandler);  // 404 for API routes
+app.use(errorHandler);             // Global error handler
+
+// Setup process-level error handlers
+setupProcessErrorHandlers();
 
 // Cleanup expired sessions periodically (every hour)
 setInterval(() => {
   try {
     const result = cleanupExpiredSessions();
     if (result.changes > 0) {
-      console.log(`Cleaned up ${result.changes} expired sessions`);
+      logger.info({ sessionsRemoved: result.changes }, 'Cleaned up expired sessions');
     }
   } catch (error) {
-    console.error('Session cleanup error:', error);
+    logger.error({ error: error.message }, 'Session cleanup error');
   }
 }, 60 * 60 * 1000);
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-
-  // Log LLM provider status
   const providers = getProviderStatus();
-  console.log(`LLM Providers: OpenAI ${providers.openai ? '✓' : '✗'}, Anthropic ${providers.anthropic ? '✓' : '✗'}`);
+
+  logger.info({
+    port: PORT,
+    env: process.env.NODE_ENV || 'development',
+    providers: {
+      openai: providers.openai,
+      anthropic: providers.anthropic,
+    },
+  }, 'Server started');
 });

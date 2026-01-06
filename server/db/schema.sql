@@ -18,6 +18,10 @@ CREATE INDEX IF NOT EXISTS idx_error_reports_category ON error_reports(category)
 CREATE INDEX IF NOT EXISTS idx_error_reports_received_at ON error_reports(received_at);
 CREATE INDEX IF NOT EXISTS idx_error_reports_app_version ON error_reports(app_version);
 
+-- Link reports to aggregated issues (added via migration)
+-- ALTER TABLE error_reports ADD COLUMN issue_id INTEGER REFERENCES error_issues(id);
+CREATE INDEX IF NOT EXISTS idx_error_reports_issue ON error_reports(issue_id);
+
 -- Users
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,6 +119,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(refresh_token_hash);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expires_at);
 
 -- OAuth Exchange Codes (one-time codes to exchange for tokens)
 -- Prevents tokens from being exposed in URL query params
@@ -130,6 +135,19 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_codes(expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_codes_user ON oauth_codes(user_id);
+
+-- Password Change Attempts (for rate limiting)
+CREATE TABLE IF NOT EXISTS password_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  success INTEGER DEFAULT 0,
+  ip_hash TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_attempts_user_time ON password_attempts(user_id, attempted_at);
 
 -- ============================================================================
 -- MIGRATIONS (for existing databases)
@@ -142,3 +160,60 @@ CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_codes(expires_at);
 
 -- Migration: Add billing_interval to subscriptions
 -- Run this manually or via a migration script if the column doesn't exist
+
+-- ============================================================================
+-- ERROR MONITORING SYSTEM
+-- ============================================================================
+
+-- Error Issues (aggregated/grouped errors)
+-- Similar errors are grouped by fingerprint for easier management
+CREATE TABLE IF NOT EXISTS error_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fingerprint TEXT UNIQUE NOT NULL,      -- SHA-256 hash of category + errorType + normalized message
+  category TEXT NOT NULL,
+  error_type TEXT NOT NULL,
+  message_pattern TEXT,                   -- Normalized message (paths/IDs removed)
+  first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  occurrence_count INTEGER DEFAULT 1,
+  status TEXT DEFAULT 'open',             -- 'open', 'resolved', 'ignored'
+  resolved_at DATETIME,
+  resolved_in_version TEXT,               -- App version where it was fixed
+  notes TEXT                              -- Admin notes/comments
+);
+
+CREATE INDEX IF NOT EXISTS idx_error_issues_fingerprint ON error_issues(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_error_issues_status ON error_issues(status);
+CREATE INDEX IF NOT EXISTS idx_error_issues_last_seen ON error_issues(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_error_issues_category ON error_issues(category);
+
+-- Alert Rules (for email notifications)
+CREATE TABLE IF NOT EXISTS alert_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  rule_type TEXT NOT NULL,                -- 'new_issue', 'threshold', 'spike'
+  category_filter TEXT,                   -- Optional: only alert for specific category
+  threshold_count INTEGER,                -- For threshold rules: trigger when > N errors
+  threshold_window_minutes INTEGER,       -- For threshold rules: within M minutes
+  email TEXT NOT NULL,                    -- Email address to notify
+  enabled INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled);
+CREATE INDEX IF NOT EXISTS idx_alert_rules_type ON alert_rules(rule_type);
+
+-- Alert History (track sent alerts)
+CREATE TABLE IF NOT EXISTS alert_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id INTEGER NOT NULL,
+  issue_id INTEGER,
+  triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  notification_sent INTEGER DEFAULT 0,
+  error_message TEXT,                     -- If notification failed
+  FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE,
+  FOREIGN KEY (issue_id) REFERENCES error_issues(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_history_rule ON alert_history(rule_id);
+CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at)

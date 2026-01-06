@@ -1,6 +1,8 @@
 import express from 'express';
 import crypto from 'crypto';
 import db from '../db/index.js';
+import { logger } from '../utils/logger.js';
+import { processErrorReport } from '../services/errorAggregator.js';
 
 const router = express.Router();
 
@@ -65,7 +67,7 @@ router.post('/error-report', (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    stmt.run(
+    const result = stmt.run(
       category,
       errorType,
       message || '',
@@ -78,10 +80,33 @@ router.post('/error-report', (req, res) => {
       ipHash
     );
 
+    // Aggregate error into issues and trigger alerts if needed
+    try {
+      const issue = processErrorReport(result.lastInsertRowid, {
+        category,
+        errorType,
+        message: message || ''
+      });
+
+      // Log new issues for visibility
+      if (issue.isNew) {
+        logger.info({
+          issueId: issue.id,
+          category,
+          errorType
+        }, 'New error issue detected');
+      }
+    } catch (aggregateErr) {
+      // Don't fail the request if aggregation fails
+      logger.error({
+        error: aggregateErr?.message || aggregateErr
+      }, 'Error aggregating report');
+    }
+
     res.status(200).json({ success: true });
 
   } catch (err) {
-    console.error('Error processing report:', err);
+    logger.error({ error: err?.message || err }, 'Error processing report');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -124,7 +149,7 @@ router.get('/admin/errors', (req, res) => {
     res.json({ reports: parsedReports, stats });
 
   } catch (err) {
-    console.error('Error fetching reports:', err);
+    logger.error({ error: err?.message || err }, 'Error fetching reports');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

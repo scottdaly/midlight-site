@@ -10,6 +10,7 @@ import {
   getProviderStatus
 } from '../services/llm/index.js';
 import { checkQuota, getUsageStats, getRateLimit } from '../services/llm/quotaManager.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -123,7 +124,7 @@ router.post('/chat', chatValidation, async (req, res) => {
       res.json(response);
     }
   } catch (error) {
-    console.error('LLM chat error:', error);
+    logger.error({ error: error?.message || error }, 'LLM chat error');
 
     if (error.code === 'QUOTA_EXCEEDED') {
       return res.status(429).json({
@@ -182,7 +183,7 @@ router.post('/chat-with-tools', [
 
     res.json(response);
   } catch (error) {
-    console.error('LLM tools error:', error);
+    logger.error({ error: error?.message || error }, 'LLM tools error');
 
     if (error.code === 'QUOTA_EXCEEDED') {
       return res.status(429).json({
@@ -207,7 +208,7 @@ router.get('/models', (req, res) => {
       tier: req.subscription.tier
     });
   } catch (error) {
-    console.error('Get models error:', error);
+    logger.error({ error: error?.message || error }, 'Get models error');
     res.status(500).json({ error: 'Failed to get models' });
   }
 });
@@ -224,7 +225,7 @@ router.get('/quota', async (req, res) => {
       remaining: quota.remaining
     });
   } catch (error) {
-    console.error('Get quota error:', error);
+    logger.error({ error: error?.message || error }, 'Get quota error');
     res.status(500).json({ error: 'Failed to get quota' });
   }
 });
@@ -235,7 +236,7 @@ router.get('/usage', (req, res) => {
     const stats = getUsageStats(req.user.id);
     res.json(stats);
   } catch (error) {
-    console.error('Get usage error:', error);
+    logger.error({ error: error?.message || error }, 'Get usage error');
     res.status(500).json({ error: 'Failed to get usage stats' });
   }
 });
@@ -250,7 +251,7 @@ router.get('/status', (req, res) => {
       providers
     });
   } catch (error) {
-    console.error('Get status error:', error);
+    logger.error({ error: error?.message || error }, 'Get status error');
     res.status(500).json({ error: 'Failed to get status' });
   }
 });
