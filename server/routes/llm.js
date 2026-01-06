@@ -35,8 +35,9 @@ const chatValidation = [
   body('provider').isIn(['openai', 'anthropic', 'gemini']).withMessage('Invalid provider'),
   body('model').notEmpty().withMessage('Model required'),
   body('messages').isArray({ min: 1 }).withMessage('Messages array required'),
-  body('messages.*.role').isIn(['system', 'user', 'assistant']).withMessage('Invalid message role'),
-  body('messages.*.content').notEmpty().withMessage('Message content required'),
+  body('messages.*.role').isIn(['system', 'user', 'assistant', 'tool']).withMessage('Invalid message role'),
+  // Content can be empty for assistant messages with tool calls
+  body('messages.*.content').exists().withMessage('Message content required'),
   body('temperature').optional().isFloat({ min: 0, max: 2 }),
   body('maxTokens').optional().isInt({ min: 1, max: 32000 }),
   body('stream').optional().isBoolean()

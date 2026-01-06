@@ -33,6 +33,40 @@ export const OPENAI_MODELS = [
 // Models that don't support temperature parameter
 const NO_TEMPERATURE_MODELS = ['gpt-5-nano', 'gpt-5-mini', 'gpt-5.2'];
 
+// Convert our message format to OpenAI format
+function convertMessages(messages) {
+  return messages.map(msg => {
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      // Assistant message with tool calls - convert toolCalls to tool_calls format
+      return {
+        role: 'assistant',
+        content: msg.content || null,
+        tool_calls: msg.toolCalls.map(tc => ({
+          id: tc.id,
+          type: 'function',
+          function: {
+            name: tc.name,
+            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments)
+          }
+        }))
+      };
+    } else if (msg.role === 'tool') {
+      // Tool result message - convert toolCallId to tool_call_id
+      return {
+        role: 'tool',
+        tool_call_id: msg.toolCallId,
+        content: msg.content
+      };
+    } else {
+      // Regular message (system, user, or assistant without tool calls)
+      return {
+        role: msg.role,
+        content: msg.content
+      };
+    }
+  });
+}
+
 export async function chat({
   model,
   messages,
@@ -118,7 +152,7 @@ export async function chatWithTools({
 }) {
   const params = {
     model,
-    messages,
+    messages: convertMessages(messages),
     tools: tools.map(tool => ({
       type: 'function',
       function: {

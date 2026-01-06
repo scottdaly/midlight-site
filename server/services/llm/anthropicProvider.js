@@ -38,9 +38,46 @@ function convertMessages(messages) {
   for (const msg of messages) {
     if (msg.role === 'system') {
       systemMessage = msg.content;
-    } else {
+    } else if (msg.role === 'assistant') {
+      // Assistant messages may have tool calls
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        // Build content array with text (if any) and tool_use blocks
+        const content = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls) {
+          content.push({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.arguments
+          });
+        }
+        anthropicMessages.push({
+          role: 'assistant',
+          content
+        });
+      } else {
+        anthropicMessages.push({
+          role: 'assistant',
+          content: msg.content
+        });
+      }
+    } else if (msg.role === 'tool') {
+      // Tool result messages - Anthropic expects these as user messages with tool_result content
       anthropicMessages.push({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: msg.toolCallId,
+          content: msg.content
+        }]
+      });
+    } else {
+      // User messages
+      anthropicMessages.push({
+        role: 'user',
         content: msg.content
       });
     }

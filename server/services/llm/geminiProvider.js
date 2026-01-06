@@ -30,9 +30,52 @@ function convertMessages(messages) {
     if (msg.role === 'system') {
       // Gemini uses systemInstruction as a separate parameter
       systemInstruction = msg.content;
-    } else {
+    } else if (msg.role === 'assistant') {
+      // Assistant messages may have tool calls
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        const parts = [];
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls) {
+          parts.push({
+            functionCall: {
+              name: toolCall.name,
+              args: toolCall.arguments
+            }
+          });
+        }
+        geminiContents.push({
+          role: 'model',
+          parts
+        });
+      } else {
+        geminiContents.push({
+          role: 'model',
+          parts: [{ text: msg.content }]
+        });
+      }
+    } else if (msg.role === 'tool') {
+      // Tool result messages - Gemini expects functionResponse in user role
+      let parsedContent;
+      try {
+        parsedContent = JSON.parse(msg.content);
+      } catch {
+        parsedContent = { result: msg.content };
+      }
       geminiContents.push({
-        role: msg.role === 'assistant' ? 'model' : 'user',
+        role: 'user',
+        parts: [{
+          functionResponse: {
+            name: msg.name || 'tool',
+            response: parsedContent
+          }
+        }]
+      });
+    } else {
+      // User messages
+      geminiContents.push({
+        role: 'user',
         parts: [{ text: msg.content }]
       });
     }
