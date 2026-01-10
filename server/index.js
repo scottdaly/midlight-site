@@ -17,6 +17,7 @@ import subscriptionRouter from './routes/subscription.js';
 import stripeWebhookRouter from './routes/stripeWebhook.js';
 import healthRouter from './routes/health.js';
 import adminRouter from './routes/admin.js';
+import syncRouter from './routes/sync.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions } from './services/tokenService.js';
 import { getProviderStatus } from './services/llm/index.js';
@@ -78,6 +79,8 @@ app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }), stripe
 app.use('/api/llm', express.json({ limit: CONFIG.requestLimits.llm }));
 // Error reports can be moderately large (stack traces, context)
 app.use('/api/error-report', express.json({ limit: CONFIG.requestLimits.errorReport }));
+// Sync requests can include full document content
+app.use('/api/sync', express.json({ limit: CONFIG.requestLimits.sync }));
 // Default for all other routes - smaller to prevent abuse
 app.use(express.json({ limit: CONFIG.requestLimits.json }));
 app.use(cookieParser());
@@ -134,6 +137,7 @@ app.use('/api/auth', conditionalCsrf);
 app.use('/api/user', conditionalCsrf);
 app.use('/api/llm', conditionalCsrf);
 app.use('/api/subscription', conditionalCsrf);
+app.use('/api/sync', conditionalCsrf);
 
 // CSRF token endpoint for web clients
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
@@ -243,6 +247,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/subscription', subscriptionRouter);
+app.use('/api/sync', syncRouter);
 app.use('/api/admin', adminRouter);
 
 // Health check endpoints (no auth required)

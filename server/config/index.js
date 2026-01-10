@@ -30,6 +30,21 @@ export const CONFIG = {
         max: 60,
       },
     },
+    // Sync operations (per tier)
+    sync: {
+      free: {
+        windowMs: 60 * 1000, // 1 minute
+        max: 20, // Lower rate for free tier
+      },
+      premium: {
+        windowMs: 60 * 1000,
+        max: 60,
+      },
+      pro: {
+        windowMs: 60 * 1000,
+        max: 120,
+      },
+    },
     // Password change attempts
     password: {
       windowMs: 60 * 60 * 1000, // 1 hour
@@ -77,6 +92,23 @@ export const CONFIG = {
     json: 10 * 1024, // 10KB default
     llm: 1 * 1024 * 1024, // 1MB for LLM requests
     errorReport: 100 * 1024, // 100KB for error reports
+    sync: 5 * 1024 * 1024, // 5MB for document sync
+  },
+
+  // Sync storage quotas (in bytes)
+  syncStorage: {
+    free: {
+      maxBytes: 100 * 1024 * 1024, // 100MB
+      maxDocuments: 100,
+    },
+    premium: {
+      maxBytes: 1024 * 1024 * 1024, // 1GB
+      maxDocuments: 1000,
+    },
+    pro: {
+      maxBytes: 10 * 1024 * 1024 * 1024, // 10GB
+      maxDocuments: 10000,
+    },
   },
 
   // Session / Cookie settings

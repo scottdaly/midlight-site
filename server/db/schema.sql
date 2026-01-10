@@ -216,4 +216,80 @@ CREATE TABLE IF NOT EXISTS alert_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alert_history_rule ON alert_history(rule_id);
-CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at)
+CREATE INDEX IF NOT EXISTS idx_alert_history_triggered ON alert_history(triggered_at);
+
+-- ============================================================================
+-- DOCUMENT SYNC SYSTEM
+-- ============================================================================
+
+-- Sync Documents (metadata for synced documents)
+CREATE TABLE IF NOT EXISTS sync_documents (
+  id TEXT PRIMARY KEY,                      -- UUID
+  user_id INTEGER NOT NULL,
+  path TEXT NOT NULL,                       -- Document path (e.g., '/notes/hello.md')
+  content_hash TEXT NOT NULL,               -- SHA-256 of document content
+  sidecar_hash TEXT NOT NULL,               -- SHA-256 of sidecar JSON
+  r2_content_key TEXT,                      -- R2 object key for content
+  r2_sidecar_key TEXT,                      -- R2 object key for sidecar
+  version INTEGER NOT NULL DEFAULT 1,       -- Incremented on each update
+  size_bytes INTEGER DEFAULT 0,             -- Document size for quota tracking
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME,                      -- Soft delete for sync
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_documents_user ON sync_documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_sync_documents_user_path ON sync_documents(user_id, path);
+CREATE INDEX IF NOT EXISTS idx_sync_documents_updated ON sync_documents(updated_at);
+CREATE INDEX IF NOT EXISTS idx_sync_documents_deleted ON sync_documents(deleted_at);
+
+-- Sync Conflicts (when local and remote versions diverge)
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id TEXT PRIMARY KEY,                      -- UUID
+  document_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  local_version INTEGER,
+  remote_version INTEGER,
+  local_content_hash TEXT,
+  remote_content_hash TEXT,
+  local_r2_key TEXT,                        -- Preserved local version in R2
+  remote_r2_key TEXT,                       -- Preserved remote version in R2
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved_at DATETIME,
+  resolution TEXT,                          -- 'local', 'remote', 'merged', 'both'
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_document ON sync_conflicts(document_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_user ON sync_conflicts(user_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_unresolved ON sync_conflicts(user_id, resolved_at);
+
+-- Sync Usage (track storage usage per user)
+CREATE TABLE IF NOT EXISTS sync_usage (
+  user_id INTEGER PRIMARY KEY,
+  document_count INTEGER DEFAULT 0,
+  total_size_bytes INTEGER DEFAULT 0,
+  last_sync_at DATETIME,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Sync Operations Log (for debugging and analytics)
+CREATE TABLE IF NOT EXISTS sync_operations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  document_id TEXT,
+  operation TEXT NOT NULL,                  -- 'upload', 'download', 'delete', 'conflict'
+  path TEXT,
+  size_bytes INTEGER DEFAULT 0,
+  success INTEGER DEFAULT 1,
+  error_message TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_operations_user ON sync_operations(user_id);
+CREATE INDEX IF NOT EXISTS idx_sync_operations_created ON sync_operations(created_at)
