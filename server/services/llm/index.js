@@ -302,3 +302,43 @@ export function getProviderStatus() {
     gemini: geminiProvider.isConfigured()
   };
 }
+
+/**
+ * Generate embeddings for text using OpenAI
+ * @param {Object} params - Embedding parameters
+ * @param {number} params.userId - User ID for quota tracking
+ * @param {string[]} params.texts - Array of texts to embed
+ * @returns {Promise<{embeddings: number[][], model: string, dimensions: number}>}
+ */
+export async function embed({ userId, texts }) {
+  // Check quota
+  const quota = await checkQuota(userId);
+  if (!quota.allowed) {
+    const error = new Error('Monthly quota exceeded');
+    error.code = 'QUOTA_EXCEEDED';
+    error.quota = quota;
+    throw error;
+  }
+
+  if (!openaiProvider.isConfigured()) {
+    throw new Error('OpenAI provider is not configured');
+  }
+
+  const embeddings = await openaiProvider.embed(texts);
+
+  // Track embedding usage - estimate tokens (roughly 4 chars per token)
+  const totalChars = texts.reduce((sum, t) => sum + t.length, 0);
+  const estimatedTokens = Math.ceil(totalChars / 4);
+
+  await trackUsage(userId, 'openai', openaiProvider.EMBEDDING_MODEL, {
+    promptTokens: estimatedTokens,
+    completionTokens: 0,
+    totalTokens: estimatedTokens
+  }, 'embedding');
+
+  return {
+    embeddings,
+    model: openaiProvider.EMBEDDING_MODEL,
+    dimensions: openaiProvider.EMBEDDING_DIMENSIONS
+  };
+}

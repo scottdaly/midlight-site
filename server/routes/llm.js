@@ -5,6 +5,7 @@ import { requireAuth, attachSubscription } from '../middleware/auth.js';
 import {
   chat,
   chatWithTools,
+  embed,
   getAvailableModels,
   isModelAllowed,
   getProviderStatus
@@ -254,6 +255,41 @@ router.get('/status', (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Get status error');
     res.status(500).json({ error: 'Failed to get status' });
+  }
+});
+
+// POST /api/llm/embed - Generate embeddings for text
+const embedValidation = [
+  body('texts').isArray({ min: 1, max: 100 }).withMessage('Texts array required (1-100 items)'),
+  body('texts.*').isString().isLength({ min: 1, max: 32000 }).withMessage('Each text must be 1-32000 chars')
+];
+
+router.post('/embed', embedValidation, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { texts } = req.body;
+
+    const result = await embed({
+      userId: req.user.id,
+      texts
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Embed error');
+
+    if (error.code === 'QUOTA_EXCEEDED') {
+      return res.status(429).json({
+        error: 'Monthly quota exceeded',
+        quota: error.quota
+      });
+    }
+
+    res.status(500).json({ error: 'Embedding request failed' });
   }
 });
 

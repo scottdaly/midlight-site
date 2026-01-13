@@ -212,3 +212,42 @@ export async function chatWithTools({
 export function isConfigured() {
   return !!process.env.OPENAI_API_KEY;
 }
+
+// Embedding model configuration
+export const EMBEDDING_MODEL = 'text-embedding-3-small';
+export const EMBEDDING_DIMENSIONS = 1536;
+
+/**
+ * Generate embeddings for text inputs
+ * @param {string[]} texts - Array of texts to embed
+ * @returns {Promise<number[][]>} Array of embedding vectors
+ */
+export async function embed(texts) {
+  if (!texts || texts.length === 0) {
+    return [];
+  }
+
+  // OpenAI has a limit of 8191 tokens per input for embeddings
+  // and max 2048 inputs per batch request
+  const MAX_BATCH_SIZE = 100; // Keep batches reasonable
+  const allEmbeddings = [];
+
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const batch = texts.slice(i, i + MAX_BATCH_SIZE);
+
+    const response = await client.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: batch,
+      dimensions: EMBEDDING_DIMENSIONS
+    });
+
+    // Extract embeddings in the correct order
+    const batchEmbeddings = response.data
+      .sort((a, b) => a.index - b.index)
+      .map(item => item.embedding);
+
+    allEmbeddings.push(...batchEmbeddings);
+  }
+
+  return allEmbeddings;
+}
