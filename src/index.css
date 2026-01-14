@@ -163,6 +163,35 @@ p {
   box-shadow: 0 0 20px var(--shadow-glow);
 }
 
+.btn-secondary {
+  display: inline-block;
+  background-color: transparent;
+  color: var(--text-main);
+  padding: 1rem 2rem;
+  border-radius: 50px;
+  border: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-secondary:hover {
+  transform: scale(1.02);
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: var(--text-muted);
+}
+
+/* Hero CTA Group */
+.hero-cta-group {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .btn-link {
   background: none;
   border: none;
@@ -481,6 +510,91 @@ nav {
   font-size: 1.25rem;
   color: var(--text-muted);
   margin-bottom: 3rem;
+}
+
+/* Web Editor Option */
+.web-editor-option {
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+.web-editor-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  transition: border-color 0.3s ease;
+}
+
+.web-editor-card:hover {
+  border-color: var(--border-hover);
+}
+
+.web-editor-card .platform-icon {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.web-editor-content {
+  flex: 1;
+  text-align: left;
+}
+
+.web-editor-content h2 {
+  font-size: 1.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.web-editor-content p {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.web-editor-card .btn-primary {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.download-divider {
+  display: flex;
+  align-items: center;
+  margin: 2rem auto 2.5rem;
+  max-width: 600px;
+}
+
+.download-divider::before,
+.download-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.download-divider span {
+  padding: 0 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 600px) {
+  .web-editor-card {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .web-editor-content {
+    text-align: center;
+  }
+
+  .web-editor-card .btn-primary {
+    width: 100%;
+  }
 }
 
 .download-cards {

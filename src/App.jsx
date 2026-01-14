@@ -102,7 +102,10 @@ function Home() {
             <p style={{ marginTop: '1.5rem', marginBottom: '2.5rem', maxWidth: '500px', marginInline: 'auto' }}>
               Midlight is the intelligent, distraction-free environment built for the modern writer. Experience the flow state.
             </p>
-            <Link to="/download" className="btn-primary">Download for Mac & Windows</Link>
+            <div className="hero-cta-group">
+              <Link to="/download" className="btn-primary">Download for Mac & Windows</Link>
+              <a href="/editor" className="btn-secondary">Try in Browser</a>
+            </div>
           </div>
 
           {/* Features Grid */}

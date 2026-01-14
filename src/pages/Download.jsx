@@ -20,6 +20,14 @@ const LinuxIcon = () => (
   </svg>
 );
 
+const GlobeIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="2" y1="12" x2="22" y2="12"/>
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+  </svg>
+);
+
 function Download() {
   const [versionInfo, setVersionInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +61,26 @@ function Download() {
           <p className="download-subtitle">
             Choose your platform and start writing distraction-free.
           </p>
+
+          {/* Web Editor Option */}
+          <div className="web-editor-option">
+            <div className="web-editor-card">
+              <div className="platform-icon">
+                <GlobeIcon />
+              </div>
+              <div className="web-editor-content">
+                <h2>Try in Browser</h2>
+                <p>No download required. Start writing instantly in your browser with full offline support.</p>
+              </div>
+              <a href="/editor" className="btn-primary">
+                Open Web Editor
+              </a>
+            </div>
+          </div>
+
+          <div className="download-divider">
+            <span>or download the desktop app</span>
+          </div>
 
           <div className="download-cards">
             {/* macOS Card */}
