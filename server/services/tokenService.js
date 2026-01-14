@@ -229,3 +229,67 @@ export function validateOAuthState(state) {
 
   return stateData;
 }
+
+// Password Reset Token Functions
+
+const PASSWORD_RESET_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Generate a password reset token for a user
+ * @param {number} userId - The user ID
+ * @returns {string} - The reset token
+ */
+export function generatePasswordResetToken(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_MS);
+
+  // Delete any existing reset tokens for this user
+  const deleteStmt = db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?');
+  deleteStmt.run(userId);
+
+  // Insert new token
+  const stmt = db.prepare(`
+    INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+  `);
+  stmt.run(userId, tokenHash, expiresAt.toISOString());
+
+  return token;
+}
+
+/**
+ * Validate a password reset token
+ * @param {string} token - The reset token
+ * @returns {object|null} - User ID and email if valid, null otherwise
+ */
+export function validatePasswordResetToken(token) {
+  const tokenHash = hashToken(token);
+
+  const stmt = db.prepare(`
+    SELECT prt.user_id, u.email, u.display_name
+    FROM password_reset_tokens prt
+    JOIN users u ON prt.user_id = u.id
+    WHERE prt.token_hash = ? AND prt.expires_at > datetime('now')
+  `);
+
+  return stmt.get(tokenHash) || null;
+}
+
+/**
+ * Consume (delete) a password reset token after successful reset
+ * @param {string} token - The reset token
+ */
+export function consumePasswordResetToken(token) {
+  const tokenHash = hashToken(token);
+  const stmt = db.prepare('DELETE FROM password_reset_tokens WHERE token_hash = ?');
+  stmt.run(tokenHash);
+}
+
+/**
+ * Clean up expired password reset tokens
+ */
+export function cleanupExpiredPasswordResetTokens() {
+  const stmt = db.prepare("DELETE FROM password_reset_tokens WHERE expires_at <= datetime('now')");
+  return stmt.run();
+}

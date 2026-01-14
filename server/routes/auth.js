@@ -7,18 +7,24 @@ import {
   findUserById,
   createUser,
   verifyPassword,
-  hashIP
+  hashIP,
+  updatePassword
 } from '../services/authService.js';
 import {
   generateTokenPair,
   generateAccessToken,
   validateSession,
   invalidateSession,
+  invalidateAllUserSessions,
   generateExchangeCode,
   exchangeCodeForTokens,
   generateOAuthState,
-  validateOAuthState
+  validateOAuthState,
+  generatePasswordResetToken,
+  validatePasswordResetToken,
+  consumePasswordResetToken
 } from '../services/tokenService.js';
+import { sendPasswordResetEmail } from '../services/emailService.js';
 import { authLimiter, signupLimiter, refreshLimiter } from '../middleware/rateLimiters.js';
 
 const router = Router();
@@ -335,6 +341,106 @@ router.post('/logout', (req, res) => {
   }
 });
 
+// Validation for password reset
+const forgotPasswordValidation = [
+  body('email').isEmail().normalizeEmail().withMessage('Valid email required')
+];
+
+const resetPasswordValidation = [
+  body('token').notEmpty().withMessage('Reset token required'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+];
+
+// POST /api/auth/forgot-password
+// Sends a password reset email if the email exists
+router.post('/forgot-password', authLimiter, forgotPasswordValidation, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email } = req.body;
+
+    // Always return success to prevent email enumeration
+    // Even if the email doesn't exist, we respond with success
+    const user = findUserByEmail(email);
+
+    if (user) {
+      // Check if user has a password (not OAuth-only)
+      if (!user.password_hash) {
+        // OAuth-only user - still return success but don't send email
+        // They need to use their OAuth provider
+        logger.info({ email }, 'Password reset requested for OAuth-only account');
+      } else {
+        // Generate reset token and send email
+        const token = generatePasswordResetToken(user.id);
+        await sendPasswordResetEmail(email, token, user.display_name);
+        logger.info({ email }, 'Password reset email sent');
+      }
+    } else {
+      logger.info({ email }, 'Password reset requested for non-existent email');
+    }
+
+    // Always return success to prevent email enumeration
+    res.json({
+      success: true,
+      message: 'If an account with that email exists, we sent a password reset link.'
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Forgot password error');
+    // Still return success to prevent email enumeration via timing attacks
+    res.json({
+      success: true,
+      message: 'If an account with that email exists, we sent a password reset link.'
+    });
+  }
+});
+
+// POST /api/auth/reset-password
+// Resets the password using a valid token
+router.post('/reset-password', authLimiter, resetPasswordValidation, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { token, password } = req.body;
+
+    // Validate the token
+    const tokenData = validatePasswordResetToken(token);
+    if (!tokenData) {
+      return res.status(400).json({
+        error: 'Invalid or expired reset link. Please request a new password reset.'
+      });
+    }
+
+    // Update the password
+    await updatePassword(tokenData.user_id, password);
+
+    // Consume the token (delete it)
+    consumePasswordResetToken(token);
+
+    // Invalidate all existing sessions (security best practice)
+    invalidateAllUserSessions(tokenData.user_id);
+
+    logger.info({ userId: tokenData.user_id }, 'Password reset successful');
+
+    res.json({
+      success: true,
+      message: 'Password has been reset. Please log in with your new password.'
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Reset password error');
+    res.status(500).json({ error: 'Failed to reset password. Please try again.' });
+  }
+});
+
 // GET /api/auth/google - Initiate Google OAuth
 router.get('/google', (req, res, next) => {
   const isDesktop = req.query.desktop === 'true';
@@ -387,13 +493,14 @@ router.get('/google/callback', (req, res, next) => {
       return renderDesktopCallbackPage(res, { success: true, code });
     }
 
-    // Web: set cookie and redirect to login page (which will redirect to account)
-    setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
-    res.redirect(`${WEB_REDIRECT_BASE}/login?accessToken=${tokens.accessToken}`);
+    // Web: use one-time exchange code instead of exposing tokens in URL
+    // This is more secure as the code is single-use and short-lived
+    const code = generateExchangeCode(user.id, tokens);
+    res.redirect(`${WEB_REDIRECT_BASE}/login?code=${code}`);
   })(req, res, next);
 });
 
-// POST /api/auth/exchange - Exchange one-time code for tokens (desktop app only)
+// POST /api/auth/exchange - Exchange one-time code for tokens (used by both desktop and web)
 router.post('/exchange', (req, res) => {
   try {
     const { code } = req.body;
