@@ -63,10 +63,14 @@ router.post('/chat', chatValidation, async (req, res) => {
     } = req.body;
 
     // Check if model is allowed for user's tier
-    if (!isModelAllowed(model, req.subscription.tier)) {
+    const userTier = req.subscription?.tier || 'free';
+    if (!isModelAllowed(model, userTier)) {
+      logger.warn({ model, userTier, userId: req.user.id }, 'Model not allowed for tier');
       return res.status(403).json({
+        code: 'MODEL_NOT_ALLOWED',
         error: 'Model not available for your subscription tier',
-        tier: req.subscription.tier
+        tier: userTier,
+        requestedModel: model
       });
     }
 
@@ -165,10 +169,14 @@ router.post('/chat-with-tools', [
     } = req.body;
 
     // Check if model is allowed
-    if (!isModelAllowed(model, req.subscription.tier)) {
+    const userTier = req.subscription?.tier || 'free';
+    if (!isModelAllowed(model, userTier)) {
+      logger.warn({ model, userTier, userId: req.user.id }, 'Model not allowed for tier');
       return res.status(403).json({
+        code: 'MODEL_NOT_ALLOWED',
         error: 'Model not available for your subscription tier',
-        tier: req.subscription.tier
+        tier: userTier,
+        requestedModel: model
       });
     }
 

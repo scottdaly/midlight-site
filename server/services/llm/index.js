@@ -289,10 +289,15 @@ export function isModelAllowed(modelId, tier) {
   const model = allModels.find(m => m.id === modelId);
 
   if (!model) {
+    console.warn(`[isModelAllowed] Model not found: "${modelId}". Available models:`, allModels.map(m => m.id));
     return false;
   }
 
-  return canAccessTier(tier, model.tier);
+  const allowed = canAccessTier(tier, model.tier);
+  if (!allowed) {
+    console.warn(`[isModelAllowed] Tier access denied: user tier "${tier}" cannot access model tier "${model.tier}" for model "${modelId}"`);
+  }
+  return allowed;
 }
 
 export function getProviderStatus() {
