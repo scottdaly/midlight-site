@@ -306,4 +306,129 @@ CREATE TABLE IF NOT EXISTS sync_operations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_operations_user ON sync_operations(user_id);
-CREATE INDEX IF NOT EXISTS idx_sync_operations_created ON sync_operations(created_at)
+CREATE INDEX IF NOT EXISTS idx_sync_operations_created ON sync_operations(created_at);
+
+-- ============================================================================
+-- SKILLS MARKETPLACE SYSTEM
+-- ============================================================================
+
+-- Marketplace Skills Catalog
+CREATE TABLE IF NOT EXISTS marketplace_skills (
+  id TEXT PRIMARY KEY,                        -- UUID
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  icon TEXT NOT NULL,
+  category TEXT NOT NULL,                     -- 'writing', 'editing', 'analysis', 'extraction', 'generation', 'utility'
+  author_id INTEGER NOT NULL,
+  author_name TEXT NOT NULL,
+  current_version TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  install_count INTEGER DEFAULT 0,
+  avg_rating REAL DEFAULT 0,
+  rating_count INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'published',            -- 'published', 'flagged', 'removed'
+  is_featured INTEGER DEFAULT 0,
+  tags TEXT,                                  -- JSON array
+  FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(name, author_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_category ON marketplace_skills(category);
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_status ON marketplace_skills(status);
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_featured ON marketplace_skills(is_featured);
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_author ON marketplace_skills(author_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_rating ON marketplace_skills(avg_rating DESC);
+CREATE INDEX IF NOT EXISTS idx_marketplace_skills_installs ON marketplace_skills(install_count DESC);
+
+-- Skill Versions (version history for each skill)
+CREATE TABLE IF NOT EXISTS skill_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  inputs TEXT NOT NULL,                       -- JSON array of SkillInput
+  output_format TEXT NOT NULL,                -- 'text', 'markdown', 'json', 'replace'
+  supports_selection INTEGER DEFAULT 1,
+  supports_chat INTEGER DEFAULT 1,
+  changelog TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (skill_id) REFERENCES marketplace_skills(id) ON DELETE CASCADE,
+  UNIQUE(skill_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id);
+
+-- Skill Ratings and Reviews
+CREATE TABLE IF NOT EXISTS skill_ratings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+  review TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (skill_id) REFERENCES marketplace_skills(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(skill_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_ratings_skill ON skill_ratings(skill_id);
+CREATE INDEX IF NOT EXISTS idx_skill_ratings_user ON skill_ratings(user_id);
+
+-- Community Flags (for reporting inappropriate/broken skills)
+CREATE TABLE IF NOT EXISTS skill_flags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,                       -- 'spam', 'inappropriate', 'broken', 'other'
+  details TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved INTEGER DEFAULT 0,
+  resolved_at DATETIME,
+  resolved_by INTEGER,
+  resolution_notes TEXT,
+  FOREIGN KEY (skill_id) REFERENCES marketplace_skills(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (resolved_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_flags_skill ON skill_flags(skill_id);
+CREATE INDEX IF NOT EXISTS idx_skill_flags_unresolved ON skill_flags(resolved);
+
+-- User's Installed Marketplace Skills
+CREATE TABLE IF NOT EXISTS user_installed_skills (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  skill_id TEXT NOT NULL,
+  installed_version TEXT NOT NULL,
+  installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (skill_id) REFERENCES marketplace_skills(id) ON DELETE CASCADE,
+  UNIQUE(user_id, skill_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_installed_skills_user ON user_installed_skills(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_installed_skills_skill ON user_installed_skills(skill_id);
+
+-- User's Private Skills (synced across devices)
+CREATE TABLE IF NOT EXISTS user_private_skills (
+  id TEXT PRIMARY KEY,                        -- UUID
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  icon TEXT NOT NULL,
+  category TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  inputs TEXT NOT NULL,                       -- JSON array of SkillInput
+  output_format TEXT NOT NULL,
+  supports_selection INTEGER DEFAULT 1,
+  supports_chat INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_private_skills_user ON user_private_skills(user_id)

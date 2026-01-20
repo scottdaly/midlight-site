@@ -78,3 +78,28 @@ export function attachSubscription(req, res, next) {
   }
   next();
 }
+
+/**
+ * Require Pro or Premium subscription (paid tier)
+ * Use for features like skill submission to marketplace
+ */
+export function requirePro(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authorization required' });
+  }
+
+  const subscription = req.subscription || getUserSubscription(req.user.id);
+  const isPaidTier = subscription.tier === 'pro' || subscription.tier === 'premium';
+  const isActive = subscription.status === 'active' || subscription.status === 'trialing';
+
+  if (!isPaidTier || !isActive) {
+    return res.status(403).json({
+      error: 'Pro subscription required',
+      currentTier: subscription.tier,
+      status: subscription.status,
+    });
+  }
+
+  req.subscription = subscription;
+  next();
+}
