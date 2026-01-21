@@ -1,4 +1,4 @@
--- Error Reports (existing)
+-- Error Reports
 CREATE TABLE IF NOT EXISTS error_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   category TEXT NOT NULL,
@@ -11,15 +11,13 @@ CREATE TABLE IF NOT EXISTS error_reports (
   context TEXT,
   session_id TEXT,
   ip_hash TEXT,
-  received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  issue_id INTEGER REFERENCES error_issues(id)  -- Link to aggregated issues
 );
 
 CREATE INDEX IF NOT EXISTS idx_error_reports_category ON error_reports(category);
 CREATE INDEX IF NOT EXISTS idx_error_reports_received_at ON error_reports(received_at);
 CREATE INDEX IF NOT EXISTS idx_error_reports_app_version ON error_reports(app_version);
-
--- Link reports to aggregated issues (added via migration)
--- ALTER TABLE error_reports ADD COLUMN issue_id INTEGER REFERENCES error_issues(id);
 CREATE INDEX IF NOT EXISTS idx_error_reports_issue ON error_reports(issue_id);
 
 -- Users
