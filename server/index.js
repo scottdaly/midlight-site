@@ -54,7 +54,12 @@ app.set('trust proxy', 1);
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || ['http://localhost:5173', 'http://localhost:3000'],
+  origin: process.env.CORS_ORIGIN || [
+    'http://localhost:5173',  // Web app dev server
+    'http://localhost:3000',  // Alternative dev port
+    'http://localhost:1420',  // Tauri desktop dev server
+    'tauri://localhost',      // Tauri production webview
+  ],
   credentials: true, // Allow cookies
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token']
