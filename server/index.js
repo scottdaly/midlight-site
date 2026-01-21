@@ -53,13 +53,18 @@ configurePassport();
 app.set('trust proxy', 1);
 
 // CORS configuration
+// Parse CORS_ORIGIN env var as comma-separated list, or use defaults
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+  : [
+      'http://localhost:5173',  // Web app dev server
+      'http://localhost:3000',  // Alternative dev port
+      'http://localhost:1420',  // Tauri desktop dev server
+      'tauri://localhost',      // Tauri production webview
+    ];
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || [
-    'http://localhost:5173',  // Web app dev server
-    'http://localhost:3000',  // Alternative dev port
-    'http://localhost:1420',  // Tauri desktop dev server
-    'tauri://localhost',      // Tauri production webview
-  ],
+  origin: allowedOrigins,
   credentials: true, // Allow cookies
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token']
