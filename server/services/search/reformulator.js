@@ -5,11 +5,27 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const REFORMULATION_MODEL = 'claude-haiku-4-5-20251001';
 
-const REFORMULATION_PROMPT = `Convert the user's question into 1-3 optimal web search queries.
+/**
+ * Get the current month and year for time-sensitive queries
+ */
+function getCurrentDateContext() {
+  const now = new Date();
+  const month = now.toLocaleString('en-US', { month: 'long' });
+  const year = now.getFullYear();
+  return { month, year, monthYear: `${month} ${year}` };
+}
+
+/**
+ * Build the reformulation prompt with current date context
+ */
+function buildReformulationPrompt() {
+  const { month, year, monthYear } = getCurrentDateContext();
+
+  return `Convert the user's question into 1-3 optimal web search queries.
 
 Rules:
 - Be specific and include relevant context
-- For time-sensitive queries (news, latest, recent, today, current), add "January 2026" or "this week" to queries
+- For time-sensitive queries (news, latest, recent, today, current), add "${monthYear}" or "this week" to queries
 - Remove conversational filler ("I was wondering", "can you tell me", "I need help with")
 - Split complex questions into separate focused queries
 - Use search-friendly terms (keywords, not natural language questions)
@@ -20,13 +36,14 @@ Rules:
 Return ONLY valid JSON: {"queries": ["query1", "query2"], "isNewsQuery": boolean}
 
 Examples:
-- "what's the latest tesla news" → {"queries": ["Tesla news January 2026", "Tesla announcements this week"], "isNewsQuery": true}
-- "what's up with that new chatgpt thing" → {"queries": ["ChatGPT updates January 2026", "OpenAI ChatGPT new features"], "isNewsQuery": true}
-- "is the new iphone worth it" → {"queries": ["iPhone 17 review 2026", "iPhone 17 vs iPhone 16 comparison"], "isNewsQuery": false}
+- "what's the latest tesla news" → {"queries": ["Tesla news ${monthYear}", "Tesla announcements this week"], "isNewsQuery": true}
+- "what's up with that new chatgpt thing" → {"queries": ["ChatGPT updates ${monthYear}", "OpenAI ChatGPT new features"], "isNewsQuery": true}
+- "is the new iphone worth it" → {"queries": ["iPhone 17 review ${year}", "iPhone 17 vs iPhone 16 comparison"], "isNewsQuery": false}
 - "who won the election" → {"queries": ["US presidential election 2024 results"], "isNewsQuery": false}
-- "best laptop for coding" → {"queries": ["best programming laptops 2026", "developer laptop recommendations"], "isNewsQuery": false}
-- "what's happening with tesla stock" → {"queries": ["Tesla stock price today", "TSLA stock news January 2026"], "isNewsQuery": true}
+- "best laptop for coding" → {"queries": ["best programming laptops ${year}", "developer laptop recommendations"], "isNewsQuery": false}
+- "what's happening with tesla stock" → {"queries": ["Tesla stock price today", "TSLA stock news ${monthYear}"], "isNewsQuery": true}
 - "how's the weather in nyc" → {"queries": ["New York City weather forecast"], "isNewsQuery": false}`;
+}
 
 /**
  * @typedef {Object} ReformulationResult
@@ -62,7 +79,7 @@ export async function reformulateQuery(userMessage, conversationContext) {
     const response = await client.messages.create({
       model: REFORMULATION_MODEL,
       max_tokens: 150,
-      system: REFORMULATION_PROMPT,
+      system: buildReformulationPrompt(),
       messages: [{ role: 'user', content: userContent }]
     });
 
