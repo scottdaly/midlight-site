@@ -32,24 +32,38 @@ export class TavilySearch {
    * @param {boolean} [options.includeAnswer=true] - Include AI summary
    * @param {string[]} [options.includeDomains] - Whitelist domains
    * @param {string[]} [options.excludeDomains] - Blacklist domains
+   * @param {'general'|'news'} [options.topic='general'] - Search topic
+   * @param {number} [options.days] - Limit results to last N days
    * @returns {Promise<TavilyResponse>}
    */
   async search(query, options = {}) {
+    const body = {
+      api_key: this.apiKey,
+      query,
+      search_depth: options.searchDepth || 'basic',
+      max_results: options.maxResults || 5,
+      include_answer: options.includeAnswer ?? true,
+      include_raw_content: false,
+      include_domains: options.includeDomains,
+      exclude_domains: options.excludeDomains,
+    };
+
+    // Add topic for news-specific searches
+    if (options.topic) {
+      body.topic = options.topic;
+    }
+
+    // Add days filter for recency
+    if (options.days) {
+      body.days = options.days;
+    }
+
     const response = await fetch(`${this.baseUrl}/search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        api_key: this.apiKey,
-        query,
-        search_depth: options.searchDepth || 'basic',
-        max_results: options.maxResults || 5,
-        include_answer: options.includeAnswer ?? true,
-        include_raw_content: false,
-        include_domains: options.includeDomains,
-        exclude_domains: options.excludeDomains,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

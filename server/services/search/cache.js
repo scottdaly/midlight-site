@@ -78,9 +78,10 @@ export function setCache(query, results, answer, ttlMinutes = DEFAULT_TTL_MINUTE
  * Get or fetch search results with caching
  * @param {string} query - Search query
  * @param {Function} fetcher - Async function to fetch results if not cached
+ * @param {number} [ttlMs] - Optional custom TTL in milliseconds
  * @returns {Promise<{results: Object[], answer: string|null, cached: boolean}>}
  */
-export async function getOrFetch(query, fetcher) {
+export async function getOrFetch(query, fetcher, ttlMs) {
   const cached = getCached(query);
 
   if (cached) {
@@ -88,7 +89,9 @@ export async function getOrFetch(query, fetcher) {
   }
 
   const fresh = await fetcher();
-  setCache(query, fresh.results, fresh.answer);
+  // Convert ms to minutes if provided
+  const ttlMinutes = ttlMs ? Math.floor(ttlMs / 60000) : DEFAULT_TTL_MINUTES;
+  setCache(query, fresh.results, fresh.answer, ttlMinutes);
 
   return { ...fresh, cached: false };
 }

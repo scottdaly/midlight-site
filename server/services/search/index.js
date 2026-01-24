@@ -130,12 +130,18 @@ export async function executeSearchPipeline({
 
   // Step 2: Reformulate query
   let queries;
+  let isNewsQuery = false;
   if (isReformulatorConfigured()) {
-    queries = await reformulateQuery(message, conversationContext);
+    const reformulated = await reformulateQuery(message, conversationContext);
+    queries = reformulated.queries;
+    isNewsQuery = reformulated.isNewsQuery;
     const reformulatorUsage = getReformulatorUsage();
     cost.reformulatorCents = Math.ceil((reformulatorUsage.promptTokens * 0.000025) + (reformulatorUsage.completionTokens * 0.000125));
+    console.log(`[Search] Reformulated queries: ${JSON.stringify(queries)}, isNewsQuery: ${isNewsQuery}`);
   } else {
     queries = [message];
+    // Fallback news detection
+    isNewsQuery = /\b(news|latest|recent|today|current|happening|update|announce)/i.test(message);
   }
 
   // Step 3: Execute search with caching
@@ -152,25 +158,41 @@ export async function executeSearchPipeline({
     };
   }
 
+  // Configure search options based on query type
+  const searchOptions = {
+    maxResults: 5,
+    includeAnswer: true
+  };
+
+  // For news queries: use news topic, limit to recent days, use advanced search
+  if (isNewsQuery) {
+    searchOptions.topic = 'news';
+    searchOptions.days = 3;  // Last 3 days for freshest news
+    searchOptions.searchDepth = 'advanced';
+    console.log('[Search] Using news mode with 3-day recency filter');
+  }
+
   const allResults = [];
   let tavilyAnswer = null;
   let cachedCount = 0;
   let freshCount = 0;
 
   for (const query of queries) {
+    // Include search options in cache key for news queries (different cache for news vs general)
+    const cacheKey = isNewsQuery ? `news:${query}` : query;
+
     try {
       const { results, answer, cached } = await cache.getOrFetch(
-        query,
+        cacheKey,
         async () => {
-          const response = await tavily.search(query, {
-            maxResults: 5,
-            includeAnswer: true
-          });
+          const response = await tavily.search(query, searchOptions);
           return {
             results: response.results || [],
             answer: response.answer
           };
-        }
+        },
+        // Shorter TTL for news queries (15 minutes vs default)
+        isNewsQuery ? 15 * 60 * 1000 : undefined
       );
 
       if (cached) {
