@@ -159,6 +159,8 @@ export async function chatWithTools({
   let searchResult = null;
   let messagesWithSearch = messages;
 
+  console.log(`[LLM] webSearchEnabled: ${webSearchEnabled}, searchConfigured: ${searchService.isConfigured()}`);
+
   if (webSearchEnabled && searchService.isConfigured()) {
     try {
       // Get conversation context for classifier
@@ -179,16 +181,22 @@ export async function chatWithTools({
         conversationContext: recentContext
       });
 
+      console.log(`[LLM] Search result: executed=${searchResult.searchExecuted}, results=${searchResult.results?.length || 0}, skipReason=${searchResult.skipReason}`);
+
       if (searchResult.searchExecuted && searchResult.formattedContext) {
         // Inject search context into messages
         messagesWithSearch = searchService.injectSearchContext(
           messages,
           searchResult.formattedContext
         );
+        console.log(`[LLM] Search context injected, context tokens: ${searchResult.contextTokens}`);
       }
     } catch (error) {
       console.warn('[LLM] Search pipeline failed, continuing without:', error.message);
     }
+  } else if (webSearchEnabled && !searchService.isConfigured()) {
+    console.warn('[LLM] Web search requested but TAVILY_API_KEY not configured');
+  }
   }
 
   // Call provider WITHOUT native search (now using Tavily)
