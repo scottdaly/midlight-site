@@ -54,7 +54,10 @@ export async function reformulateQuery(userMessage, conversationContext) {
       messages: [{ role: 'user', content: userContent }]
     });
 
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+    let text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+
+    // Strip markdown code blocks if present
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     try {
       const parsed = JSON.parse(text);
