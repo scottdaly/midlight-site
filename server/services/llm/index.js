@@ -2,6 +2,7 @@ import * as openaiProvider from './openaiProvider.js';
 import * as anthropicProvider from './anthropicProvider.js';
 import * as geminiProvider from './geminiProvider.js';
 import { checkQuota, trackUsage } from './quotaManager.js';
+import * as searchService from '../search/index.js';
 
 // Combined model configuration
 export const MODELS = {
@@ -124,25 +125,8 @@ async function* streamWithTracking({
   }
 }
 
-// Providers that support native web search
-const WEB_SEARCH_PROVIDERS = ['anthropic', 'gemini'];
-
-// Haiku model for fast/cheap search pass
-const SEARCH_MODEL = 'claude-haiku-4-5-20251001';
-
-// Format search results as context for injection
-function formatSearchResultsAsContext(webSearches) {
-  if (!webSearches || webSearches.length === 0) return '';
-
-  const parts = [];
-  for (const search of webSearches) {
-    parts.push(`Search query: "${search.query}"`);
-    for (const result of search.results || []) {
-      parts.push(`- ${result.title}: ${result.snippet || result.url}`);
-    }
-  }
-  return parts.join('\n');
-}
+// Search is now unified via Tavily - works with all providers
+// See services/search/ for implementation
 
 export async function chatWithTools({
   userId,
@@ -171,84 +155,79 @@ export async function chatWithTools({
     throw new Error(`Provider ${provider} is not configured`);
   }
 
-  // Check if we need hybrid search approach
-  // Gemini 3 can't combine Google Search with function calling
-  const isGemini3 = provider === 'gemini' && model.startsWith('gemini-3');
-  const hasCustomTools = tools && tools.length > 0;
-  const needsHybridSearch = webSearchEnabled && isGemini3 && hasCustomTools && anthropicProvider.isConfigured();
-
-  let webSearchResults = [];
+  // Unified search pipeline (replaces native provider search)
+  let searchResult = null;
   let messagesWithSearch = messages;
 
-  if (needsHybridSearch) {
-    // Step 1: Do web search with Anthropic (fast Haiku model)
+  if (webSearchEnabled && searchService.isConfigured()) {
     try {
-      const searchResponse = await anthropicProvider.chatWithTools({
-        model: SEARCH_MODEL,
-        messages,
-        tools: [], // No custom tools, just web search
-        temperature: 0.3,
-        maxTokens: 1024,
-        webSearchEnabled: true
+      // Get conversation context for classifier
+      const recentContext = messages
+        .slice(-6)
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => `${m.role}: ${(m.content || '').substring(0, 200)}`)
+        .join('\n');
+
+      // Get the last user message for search
+      const lastUserMessage = messages
+        .filter(m => m.role === 'user')
+        .pop()?.content || '';
+
+      searchResult = await searchService.executeSearchPipeline({
+        userId,
+        message: lastUserMessage,
+        conversationContext: recentContext
       });
 
-      // Track the search usage separately
-      if (searchResponse.usage) {
-        await trackUsage(userId, 'anthropic', SEARCH_MODEL, searchResponse.usage, 'search');
-      }
-
-      // Extract web search results
-      if (searchResponse.webSearches?.length > 0) {
-        webSearchResults = searchResponse.webSearches;
-
-        // Inject search results into context for the main model
-        const searchContext = formatSearchResultsAsContext(webSearchResults);
-        if (searchContext) {
-          // Add search results to the last user message
-          const lastMsgIndex = messages.length - 1;
-          messagesWithSearch = [
-            ...messages.slice(0, lastMsgIndex),
-            {
-              ...messages[lastMsgIndex],
-              content: `${messages[lastMsgIndex].content}\n\n<web_search_results>\n${searchContext}\n</web_search_results>`
-            }
-          ];
-        }
+      if (searchResult.searchExecuted && searchResult.formattedContext) {
+        // Inject search context into messages
+        messagesWithSearch = searchService.injectSearchContext(
+          messages,
+          searchResult.formattedContext
+        );
       }
     } catch (error) {
-      // Log but don't fail - continue without search results
-      console.warn('[LLM] Hybrid search failed, continuing without:', error.message);
+      console.warn('[LLM] Search pipeline failed, continuing without:', error.message);
     }
   }
 
-  // Check if provider supports web search (for non-hybrid case)
-  const webSearchSupported = WEB_SEARCH_PROVIDERS.includes(provider);
-  // For hybrid search, we've already done the search; for Gemini 3 with tools, disable native search
-  const effectiveWebSearchEnabled = needsHybridSearch ? false : (webSearchEnabled && webSearchSupported && !(isGemini3 && hasCustomTools));
-
+  // Call provider WITHOUT native search (now using Tavily)
   const response = await providerService.chatWithTools({
     model,
     messages: messagesWithSearch,
     tools,
     temperature,
     maxTokens,
-    webSearchEnabled: effectiveWebSearchEnabled
+    webSearchEnabled: false  // Always false - using unified Tavily search
   });
 
-  // Track usage
+  // Track LLM usage
   await trackUsage(userId, provider, model, response.usage, requestType);
 
-  // Combine web search results: use hybrid results if available, otherwise provider's results
-  const combinedWebSearches = webSearchResults.length > 0
-    ? webSearchResults
-    : response.webSearches;
+  // Format web searches for response (matching existing format)
+  const webSearches = searchResult?.searchExecuted && searchResult.results?.length > 0
+    ? [{
+        query: searchResult.queries?.join(', ') || 'search',
+        results: searchResult.results.map(r => ({
+          url: r.url,
+          title: r.title || '',
+          snippet: (r.content || '').substring(0, 200)
+        }))
+      }]
+    : undefined;
 
-  // Include web search support info in response
   return {
     ...response,
-    webSearches: combinedWebSearches,
-    webSearchSupported: webSearchSupported || needsHybridSearch,
-    webSearchRequested: webSearchEnabled
+    webSearches,
+    webSearchSupported: searchService.isConfigured(),
+    webSearchRequested: webSearchEnabled,
+    searchMetrics: searchResult ? {
+      executed: searchResult.searchExecuted,
+      queries: searchResult.queries,
+      cachedCount: searchResult.cachedCount,
+      cost: searchResult.cost,
+      skipReason: searchResult.skipReason
+    } : undefined
   };
 }
 

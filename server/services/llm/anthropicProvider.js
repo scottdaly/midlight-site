@@ -174,18 +174,8 @@ async function* streamChat(params) {
   };
 }
 
-// Maximum number of search results to return
-const MAX_SEARCH_RESULTS = 10;
-
-// Validate URL is http/https
-function isValidHttpUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
+// Note: Web search is now handled by unified Tavily service in services/search/
+// The webSearchEnabled parameter is kept for backwards compatibility but ignored
 
 export async function chatWithTools({
   model,
@@ -193,7 +183,7 @@ export async function chatWithTools({
   tools,
   temperature = 0.7,
   maxTokens = 4096,
-  webSearchEnabled = false
+  webSearchEnabled = false  // Ignored - search handled by Tavily service
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
 
@@ -204,16 +194,6 @@ export async function chatWithTools({
     input_schema: tool.parameters
   }));
 
-  // Add web search tool if enabled
-  // Uses Anthropic's built-in web search capability
-  if (webSearchEnabled) {
-    anthropicTools.push({
-      type: 'web_search_20250305',
-      name: 'web_search',
-      // No additional configuration needed - Claude decides when to search
-    });
-  }
-
   let response;
   try {
     response = await client.messages.create({
@@ -221,7 +201,7 @@ export async function chatWithTools({
       max_tokens: maxTokens,
       messages: anthropicMessages,
       ...(systemMessage && { system: systemMessage }),
-      tools: anthropicTools
+      ...(anthropicTools.length > 0 && { tools: anthropicTools })
     });
   } catch (error) {
     const normalizedError = new Error(error.message || 'Anthropic request failed');
@@ -243,46 +223,12 @@ export async function chatWithTools({
       arguments: block.input
     }));
 
-  // Extract web search results if any
-  const webSearches = [];
-  for (const block of response.content) {
-    if (block.type === 'web_search_tool_result') {
-      // Extract search query from the preceding tool_use block
-      const searchToolUse = response.content.find(
-        b => b.type === 'tool_use' && b.name === 'web_search' && b.id === block.tool_use_id
-      );
-      const query = searchToolUse?.input?.query || 'web search';
-
-      // Parse search results with validation
-      const results = (block.content || [])
-        .filter(item =>
-          item.type === 'web_search_result' &&
-          item.url &&
-          isValidHttpUrl(item.url)
-        )
-        .slice(0, MAX_SEARCH_RESULTS)
-        .map(item => ({
-          url: item.url,
-          title: item.title || '',
-          snippet: item.page_content?.substring(0, 200) || ''
-        }));
-
-      if (results.length > 0) {
-        webSearches.push({
-          query,
-          results
-        });
-      }
-    }
-  }
-
   return {
     id: response.id,
     provider: 'anthropic',
     model: response.model,
     content: textContent,
     toolCalls,
-    webSearches: webSearches.length > 0 ? webSearches : undefined,
     finishReason: response.stop_reason,
     usage: {
       promptTokens: response.usage?.input_tokens || 0,

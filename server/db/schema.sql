@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   completion_tokens INTEGER DEFAULT 0,
   total_tokens INTEGER DEFAULT 0,
   request_type TEXT,                     -- 'chat', 'inline_edit', 'agent'
+  search_count INTEGER DEFAULT 0,        -- Number of web searches executed
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS llm_usage_monthly (
   month TEXT NOT NULL,                   -- '2025-12' format
   request_count INTEGER DEFAULT 0,
   total_tokens INTEGER DEFAULT 0,
+  search_count INTEGER DEFAULT 0,        -- Monthly search count
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   UNIQUE(user_id, month)
@@ -305,6 +307,57 @@ CREATE TABLE IF NOT EXISTS sync_operations (
 
 CREATE INDEX IF NOT EXISTS idx_sync_operations_user ON sync_operations(user_id);
 CREATE INDEX IF NOT EXISTS idx_sync_operations_created ON sync_operations(created_at);
+
+-- ============================================================================
+-- WEB SEARCH SYSTEM (Unified Tavily-based search)
+-- ============================================================================
+
+-- Search cache (replaces native provider search with unified Tavily)
+-- Stores search results for 15 minutes to reduce API costs
+CREATE TABLE IF NOT EXISTS search_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query_hash TEXT UNIQUE NOT NULL,        -- SHA-256 of normalized query (first 32 chars)
+  query TEXT NOT NULL,                     -- Original query for debugging
+  results TEXT NOT NULL,                   -- JSON array of search results
+  answer TEXT,                             -- Tavily's AI summary (optional)
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_cache_hash ON search_cache(query_hash);
+CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
+
+-- Search usage tracking (detailed per-request records)
+-- Follows same pattern as llm_usage table
+CREATE TABLE IF NOT EXISTS search_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  query_count INTEGER NOT NULL DEFAULT 1,   -- Number of search queries executed
+  cached_count INTEGER NOT NULL DEFAULT 0,  -- Number of queries served from cache
+  cost_cents INTEGER NOT NULL DEFAULT 0,    -- Total cost in cents (for precision)
+  provider TEXT NOT NULL DEFAULT 'tavily',  -- Search provider used
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_usage_user ON search_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_search_usage_created ON search_usage(created_at);
+
+-- Monthly search rollup (for fast limit checks)
+-- Follows same pattern as llm_usage_monthly table
+CREATE TABLE IF NOT EXISTS search_usage_monthly (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  month TEXT NOT NULL,                      -- '2025-12' format
+  search_count INTEGER DEFAULT 0,
+  cached_count INTEGER DEFAULT 0,
+  total_cost_cents INTEGER DEFAULT 0,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_usage_monthly_user ON search_usage_monthly(user_id, month);
 
 -- ============================================================================
 -- SKILLS MARKETPLACE SYSTEM

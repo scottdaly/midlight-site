@@ -58,6 +58,30 @@ function runMigrations() {
         console.log('Migration: Added issue_id to error_reports table');
       }
     },
+    // Add search_count to llm_usage table
+    {
+      name: 'add_search_count_to_llm_usage',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage)").all();
+        return cols.some(c => c.name === 'search_count');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage ADD COLUMN search_count INTEGER DEFAULT 0");
+        console.log('Migration: Added search_count to llm_usage table');
+      }
+    },
+    // Add search_count to llm_usage_monthly table
+    {
+      name: 'add_search_count_to_llm_usage_monthly',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage_monthly)").all();
+        return cols.some(c => c.name === 'search_count');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage_monthly ADD COLUMN search_count INTEGER DEFAULT 0");
+        console.log('Migration: Added search_count to llm_usage_monthly table');
+      }
+    },
   ];
 
   for (const migration of migrations) {

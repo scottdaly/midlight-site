@@ -183,18 +183,8 @@ async function* streamChat(generativeModel, contents) {
   };
 }
 
-// Maximum number of search results to return
-const MAX_SEARCH_RESULTS = 10;
-
-// Validate URL is http/https
-function isValidHttpUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
+// Note: Web search is now handled by unified Tavily service in services/search/
+// The webSearchEnabled parameter is kept for backwards compatibility but ignored
 
 export async function chatWithTools({
   model,
@@ -202,33 +192,15 @@ export async function chatWithTools({
   tools,
   temperature = 0.7,
   maxTokens = 4096,
-  webSearchEnabled = false
+  webSearchEnabled = false  // Ignored - search handled by Tavily service
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
   const geminiTools = convertTools(tools);
 
-  // Gemini 3 models don't support combining built-in tools (Google Search) with function calling
-  // They're mutually exclusive - prioritize custom tools when both are requested
-  const isGemini3 = model.startsWith('gemini-3');
-  const hasCustomTools = geminiTools && geminiTools.functionDeclarations?.length > 0;
-
-  // Build tools array
-  const allTools = [];
-  if (hasCustomTools) {
-    allTools.push(geminiTools);
-    // For Gemini 3, we can't add Google Search when using custom tools
-  }
-  if (webSearchEnabled && !(isGemini3 && hasCustomTools)) {
-    // Only add Google Search if:
-    // - Not Gemini 3, OR
-    // - Gemini 3 but no custom tools
-    allTools.push({ googleSearch: {} });
-  }
-
   const generativeModel = genAI.getGenerativeModel({
     model,
     ...(systemInstruction && { systemInstruction }),
-    ...(allTools.length > 0 && { tools: allTools }),
+    ...(geminiTools && { tools: [geminiTools] }),
     generationConfig: {
       temperature,
       maxOutputTokens: maxTokens
@@ -267,34 +239,6 @@ export async function chatWithTools({
     }
   }
 
-  // Extract web search grounding metadata if available
-  const webSearches = [];
-  const groundingMetadata = candidate?.groundingMetadata;
-  if (groundingMetadata?.groundingChunks && Array.isArray(groundingMetadata.groundingChunks)) {
-    // Gemini returns grounding chunks with web sources
-    // Filter with proper null checks and URL validation
-    const sources = groundingMetadata.groundingChunks
-      .filter(chunk =>
-        chunk &&
-        chunk.web &&
-        typeof chunk.web.uri === 'string' &&
-        isValidHttpUrl(chunk.web.uri)
-      )
-      .slice(0, MAX_SEARCH_RESULTS)
-      .map(chunk => ({
-        url: chunk.web.uri,
-        title: chunk.web.title || '',
-        snippet: ''
-      }));
-
-    if (sources.length > 0) {
-      webSearches.push({
-        query: groundingMetadata.webSearchQueries?.[0] || 'Google Search',
-        results: sources
-      });
-    }
-  }
-
   const usageMetadata = response.usageMetadata || {};
 
   return {
@@ -303,7 +247,6 @@ export async function chatWithTools({
     model,
     content: textContent,
     toolCalls,
-    webSearches: webSearches.length > 0 ? webSearches : undefined,
     finishReason: candidate?.finishReason || 'stop',
     usage: {
       promptTokens: usageMetadata.promptTokenCount || 0,

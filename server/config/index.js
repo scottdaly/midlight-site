@@ -146,6 +146,28 @@ export const CONFIG = {
     },
   },
 
+  // Web search settings (Tavily-based)
+  search: {
+    enabled: !!process.env.TAVILY_API_KEY,
+    cacheTtlMinutes: parseInt(process.env.SEARCH_CACHE_TTL_MINUTES) || 15,
+    limits: {
+      free: {
+        maxSearchesPerDay: 20,
+        maxCostPerMonthCents: 100, // $1
+      },
+      premium: {
+        maxSearchesPerDay: 50,
+        maxCostPerMonthCents: 500, // $5
+      },
+      pro: {
+        maxSearchesPerDay: 100,
+        maxCostPerMonthCents: 1000, // $10
+      },
+    },
+    // Cleanup interval for expired cache
+    cacheCleanupIntervalMs: 60 * 60 * 1000, // 1 hour
+  },
+
   // Database settings
   database: {
     // Cleanup old data intervals
