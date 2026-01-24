@@ -197,7 +197,6 @@ export async function chatWithTools({
   } else if (webSearchEnabled && !searchService.isConfigured()) {
     console.warn('[LLM] Web search requested but TAVILY_API_KEY not configured');
   }
-  }
 
   // Call provider WITHOUT native search (now using Tavily)
   const response = await providerService.chatWithTools({
