@@ -32,26 +32,26 @@ router.post('/error-report', (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Comprehensive Validation based on @ERROR_REPORTING_BACKEND.md
-    const validCategories = {
-      'update': ['checksum', 'network', 'download', 'install', 'unknown'],
-      'import': ['path_traversal', 'file_read', 'file_write', 'parse', 'disk_space', 'checksum', 'rollback', 'cancelled', 'unknown'],
-      'file_system': [], // Assuming generic file system errors or not strictly defined yet, allowing any
-      'crash': ['uncaught_exception', 'renderer_crash', 'renderer_unresponsive'],
-      'uncaught': ['unhandled_rejection', 'renderer_react_error', 'renderer_window_error', 'renderer_unhandled_promise']
-    };
+    // Valid categories from Tauri app (packages/core and apps/desktop)
+    const validCategories = [
+      'import',
+      'export',
+      'file_system',
+      'editor',
+      'llm',
+      'auth',
+      'recovery',
+      'update',
+      'crash',
+      'uncaught',
+      'unknown'
+    ];
 
-    if (!Object.keys(validCategories).includes(category)) {
+    if (!validCategories.includes(category)) {
       return res.status(400).json({ error: 'Invalid category' });
     }
 
-    // Validate errorType if the category has specific types defined
-    // For 'file_system', we currently allow any type as it wasn't explicitly enumerated with a closed set in the prompt's reference, 
-    // or we can treat it as open. If strict validation is needed for file_system, we would need those types.
-    // Based on the prompt, only Update, Import, Crash, and Uncaught have specific types listed.
-    if (validCategories[category].length > 0 && !validCategories[category].includes(errorType)) {
-       return res.status(400).json({ error: `Invalid errorType '${errorType}' for category '${category}'` });
-    }
+    // Allow any errorType - the client knows best what specific error occurred
 
     // Validate Context (must be an object if present)
     if (context && (typeof context !== 'object' || Array.isArray(context))) {
