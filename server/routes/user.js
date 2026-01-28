@@ -47,6 +47,55 @@ router.get('/me', (req, res) => {
   }
 });
 
+// GET /api/user/profile - Get full user profile with subscription and quota
+// This is the endpoint used by the web app for auth initialization
+router.get('/profile', (req, res) => {
+  try {
+    // Get quota info
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const rollupStmt = db.prepare(`
+      SELECT request_count, total_tokens
+      FROM llm_usage_monthly
+      WHERE user_id = ? AND month = ?
+    `);
+    const rollup = rollupStmt.get(req.user.id, currentMonth);
+
+    const limits = {
+      free: 100,
+      premium: Infinity,
+      pro: Infinity
+    };
+    const limit = limits[req.subscription.tier] || limits.free;
+    const used = rollup?.request_count || 0;
+
+    res.json({
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        displayName: req.user.display_name,
+        avatarUrl: req.user.avatar_url,
+        emailVerified: Boolean(req.user.email_verified),
+        createdAt: req.user.created_at
+      },
+      subscription: {
+        tier: req.subscription.tier,
+        status: req.subscription.status,
+        billingInterval: req.subscription.billing_interval || null,
+        currentPeriodEnd: req.subscription.current_period_end
+      },
+      quota: {
+        tier: req.subscription.tier,
+        limit: limit === Infinity ? null : limit,
+        used,
+        remaining: limit === Infinity ? null : Math.max(0, limit - used)
+      }
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Get profile error');
+    res.status(500).json({ error: 'Failed to get user profile' });
+  }
+});
+
 // PATCH /api/user/me - Update user profile
 router.patch('/me', [
   body('displayName').optional().trim().isLength({ min: 1, max: 100 }),
