@@ -25,6 +25,19 @@ const router = Router();
 router.use(requireAuth);
 router.use(attachSubscription);
 
+// Block free tier users - sync is a premium feature
+router.use((req, res, next) => {
+  const tier = req.subscription?.tier || 'free';
+  if (tier === 'free') {
+    return res.status(403).json({
+      error: 'Cloud sync requires a premium subscription',
+      code: 'SYNC_REQUIRES_PREMIUM',
+      upgrade_url: '/upgrade',
+    });
+  }
+  next();
+});
+
 // Storage limits by tier (from config)
 const STORAGE_LIMITS = {
   free: CONFIG.syncStorage.free.maxBytes,
