@@ -1,11 +1,20 @@
 import OpenAI from 'openai';
 
-// Kimi K2.5 uses OpenAI-compatible API via Together AI
-// Together AI has reliable Kimi K2.5 hosting with good documentation
-const client = new OpenAI({
+// Kimi K2.5 uses OpenAI-compatible API
+// Primary: NVIDIA (free tier)
+// Fallback: Together AI (paid, more reliable)
+
+// NVIDIA client (primary - free)
+const nvidiaClient = process.env.NVIDIA_API_KEY ? new OpenAI({
+  apiKey: process.env.NVIDIA_API_KEY,
+  baseURL: 'https://integrate.api.nvidia.com/v1'
+}) : null;
+
+// Together AI client (fallback)
+const togetherClient = process.env.KIMI_API_KEY ? new OpenAI({
   apiKey: process.env.KIMI_API_KEY,
   baseURL: 'https://api.together.xyz/v1'
-});
+}) : null;
 
 // Model configuration - each model has its own tier
 // Users can access any model at or below their subscription tier
@@ -19,9 +28,9 @@ export const KIMI_MODELS = [
   }
 ];
 
-// Map our model IDs to Together AI model IDs
+// Model IDs (same for both providers)
 const MODEL_ID_MAP = {
-  'kimi-k2.5': 'moonshotai/Kimi-K2.5'
+  'kimi-k2.5': 'moonshotai/kimi-k2.5'
 };
 
 // Convert our message format to OpenAI format (Kimi is OpenAI-compatible)
@@ -58,6 +67,30 @@ function convertMessages(messages) {
   });
 }
 
+/**
+ * Try a request with NVIDIA first, fall back to Together AI on error.
+ * @param {Function} requestFn - Function that takes a client and returns a promise
+ * @returns {Promise} - Result from whichever client succeeds
+ */
+async function withFallback(requestFn) {
+  // Try NVIDIA first if available
+  if (nvidiaClient) {
+    try {
+      return await requestFn(nvidiaClient, 'nvidia');
+    } catch (error) {
+      console.warn('[Kimi] NVIDIA API failed, falling back to Together AI:', error.message);
+      // Fall through to Together AI
+    }
+  }
+
+  // Fallback to Together AI
+  if (togetherClient) {
+    return await requestFn(togetherClient, 'together');
+  }
+
+  throw new Error('No Kimi API configured. Set NVIDIA_API_KEY or KIMI_API_KEY.');
+}
+
 export async function chat({
   model,
   messages,
@@ -65,7 +98,6 @@ export async function chat({
   maxTokens = 4096,
   stream = false
 }) {
-  // Map to Together AI model ID
   const apiModel = MODEL_ID_MAP[model] || model;
 
   const params = {
@@ -82,27 +114,60 @@ export async function chat({
     return streamChat(params, model);
   }
 
-  const response = await client.chat.completions.create(params);
+  return withFallback(async (client, source) => {
+    const response = await client.chat.completions.create(params);
 
-  const choice = response.choices[0];
-  let content = choice?.message?.content || '';
+    const choice = response.choices[0];
+    let content = choice?.message?.content || '';
 
-  return {
-    id: response.id,
-    provider: 'kimi',
-    model: model, // Return the original model ID
-    content,
-    finishReason: choice?.finish_reason,
-    usage: {
-      promptTokens: response.usage?.prompt_tokens || 0,
-      completionTokens: response.usage?.completion_tokens || 0,
-      totalTokens: response.usage?.total_tokens || 0
-    }
-  };
+    console.log(`[Kimi] Chat completed via ${source}`);
+
+    return {
+      id: response.id,
+      provider: 'kimi',
+      model: model, // Return the original model ID
+      content,
+      finishReason: choice?.finish_reason,
+      usage: {
+        promptTokens: response.usage?.prompt_tokens || 0,
+        completionTokens: response.usage?.completion_tokens || 0,
+        totalTokens: response.usage?.total_tokens || 0
+      }
+    };
+  });
 }
 
 async function* streamChat(params, originalModel) {
-  const stream = await client.chat.completions.create(params);
+  // For streaming, we need to handle fallback differently
+  // Try NVIDIA first, if it fails on connection, try Together
+  let client = nvidiaClient;
+  let source = 'nvidia';
+
+  if (!client) {
+    client = togetherClient;
+    source = 'together';
+  }
+
+  if (!client) {
+    throw new Error('No Kimi API configured. Set NVIDIA_API_KEY or KIMI_API_KEY.');
+  }
+
+  let stream;
+  try {
+    stream = await client.chat.completions.create(params);
+  } catch (error) {
+    // If NVIDIA failed and we have Together AI, try that
+    if (source === 'nvidia' && togetherClient) {
+      console.warn('[Kimi] NVIDIA streaming failed, falling back to Together AI:', error.message);
+      client = togetherClient;
+      source = 'together';
+      stream = await client.chat.completions.create(params);
+    } else {
+      throw error;
+    }
+  }
+
+  console.log(`[Kimi] Streaming via ${source}`);
 
   let totalContent = '';
   let promptTokens = 0;
@@ -145,7 +210,6 @@ export async function chatWithTools({
   maxTokens = 4096,
   webSearchEnabled = false // Ignored - search handled by Tavily service
 }) {
-  // Map to Together AI model ID
   const apiModel = MODEL_ID_MAP[model] || model;
 
   const params = {
@@ -164,39 +228,43 @@ export async function chatWithTools({
     top_p: 0.95
   };
 
-  const response = await client.chat.completions.create(params);
+  return withFallback(async (client, source) => {
+    const response = await client.chat.completions.create(params);
 
-  const message = response.choices[0]?.message;
-  const toolCalls = message?.tool_calls?.map(tc => {
-    let args = {};
-    try {
-      args = JSON.parse(tc.function.arguments);
-    } catch (e) {
-      console.error('Failed to parse tool arguments:', tc.function.arguments, e);
-      args = {};
-    }
+    const message = response.choices[0]?.message;
+    const toolCalls = message?.tool_calls?.map(tc => {
+      let args = {};
+      try {
+        args = JSON.parse(tc.function.arguments);
+      } catch (e) {
+        console.error('Failed to parse tool arguments:', tc.function.arguments, e);
+        args = {};
+      }
+      return {
+        id: tc.id,
+        name: tc.function.name,
+        arguments: args
+      };
+    });
+
+    console.log(`[Kimi] Chat with tools completed via ${source}`);
+
     return {
-      id: tc.id,
-      name: tc.function.name,
-      arguments: args
+      id: response.id,
+      provider: 'kimi',
+      model: model,
+      content: message?.content || '',
+      toolCalls: toolCalls || [],
+      finishReason: response.choices[0]?.finish_reason,
+      usage: {
+        promptTokens: response.usage?.prompt_tokens || 0,
+        completionTokens: response.usage?.completion_tokens || 0,
+        totalTokens: response.usage?.total_tokens || 0
+      }
     };
   });
-
-  return {
-    id: response.id,
-    provider: 'kimi',
-    model: model,
-    content: message?.content || '',
-    toolCalls: toolCalls || [],
-    finishReason: response.choices[0]?.finish_reason,
-    usage: {
-      promptTokens: response.usage?.prompt_tokens || 0,
-      completionTokens: response.usage?.completion_tokens || 0,
-      totalTokens: response.usage?.total_tokens || 0
-    }
-  };
 }
 
 export function isConfigured() {
-  return !!process.env.KIMI_API_KEY;
+  return !!(process.env.NVIDIA_API_KEY || process.env.KIMI_API_KEY);
 }
