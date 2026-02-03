@@ -1,6 +1,7 @@
 import * as openaiProvider from './openaiProvider.js';
 import * as anthropicProvider from './anthropicProvider.js';
 import * as geminiProvider from './geminiProvider.js';
+import * as kimiProvider from './kimiProvider.js';
 import { checkQuota, trackUsage } from './quotaManager.js';
 import * as searchService from '../search/index.js';
 
@@ -8,7 +9,8 @@ import * as searchService from '../search/index.js';
 export const MODELS = {
   openai: openaiProvider.OPENAI_MODELS,
   anthropic: anthropicProvider.ANTHROPIC_MODELS,
-  gemini: geminiProvider.GEMINI_MODELS
+  gemini: geminiProvider.GEMINI_MODELS,
+  kimi: kimiProvider.KIMI_MODELS
 };
 
 // Tier hierarchy - higher index = more access
@@ -33,6 +35,8 @@ function getProvider(providerName) {
       return anthropicProvider;
     case 'gemini':
       return geminiProvider;
+    case 'kimi':
+      return kimiProvider;
     default:
       throw new Error(`Unknown provider: ${providerName}`);
   }
@@ -242,7 +246,8 @@ export function getAvailableModels(tier = 'free') {
   const models = {
     openai: [],
     anthropic: [],
-    gemini: []
+    gemini: [],
+    kimi: []
   };
 
   // Filter OpenAI models by tier access
@@ -266,12 +271,19 @@ export function getAvailableModels(tier = 'free') {
       .map(model => ({ ...model }));
   }
 
+  // Filter Kimi models by tier access
+  if (kimiProvider.isConfigured()) {
+    models.kimi = MODELS.kimi
+      .filter(model => canAccessTier(tier, model.tier))
+      .map(model => ({ ...model }));
+  }
+
   return models;
 }
 
 export function isModelAllowed(modelId, tier) {
   // Check all models from all providers
-  const allModels = [...MODELS.openai, ...MODELS.anthropic, ...MODELS.gemini];
+  const allModels = [...MODELS.openai, ...MODELS.anthropic, ...MODELS.gemini, ...MODELS.kimi];
   const model = allModels.find(m => m.id === modelId);
 
   if (!model) {
@@ -290,7 +302,8 @@ export function getProviderStatus() {
   return {
     openai: openaiProvider.isConfigured(),
     anthropic: anthropicProvider.isConfigured(),
-    gemini: geminiProvider.isConfigured()
+    gemini: geminiProvider.isConfigured(),
+    kimi: kimiProvider.isConfigured()
   };
 }
 

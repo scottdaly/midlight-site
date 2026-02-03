@@ -33,7 +33,7 @@ router.use(llmRateLimiter);
 
 // Validation middleware
 const chatValidation = [
-  body('provider').isIn(['openai', 'anthropic', 'gemini']).withMessage('Invalid provider'),
+  body('provider').isIn(['openai', 'anthropic', 'gemini', 'kimi']).withMessage('Invalid provider'),
   body('model').notEmpty().withMessage('Model required'),
   body('messages').isArray({ min: 1 }).withMessage('Messages array required'),
   body('messages.*.role').isIn(['system', 'user', 'assistant', 'tool']).withMessage('Invalid message role'),
