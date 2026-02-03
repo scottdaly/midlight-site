@@ -13,14 +13,14 @@ export const KIMI_MODELS = [
   {
     id: 'kimi-k2.5',
     name: 'Kimi K2.5',
-    tier: 'premium',
+    tier: 'free',
     contextWindow: 262144, // 256k context
     maxOutput: 8192
   },
   {
     id: 'kimi-k2.5-thinking',
     name: 'Kimi K2.5 (Thinking)',
-    tier: 'premium',
+    tier: 'free',
     contextWindow: 262144,
     maxOutput: 8192
   }
