@@ -1,10 +1,10 @@
 import OpenAI from 'openai';
 
-// Kimi K2.5 uses OpenAI-compatible API
-// API docs: https://platform.moonshot.ai/docs/guide/kimi-k2-5-quickstart
+// Kimi K2.5 uses OpenAI-compatible API via Together AI
+// Together AI has reliable Kimi K2.5 hosting with good documentation
 const client = new OpenAI({
   apiKey: process.env.KIMI_API_KEY,
-  baseURL: 'https://api.moonshot.ai/v1'
+  baseURL: 'https://api.together.xyz/v1'
 });
 
 // Model configuration - each model has its own tier
@@ -16,18 +16,13 @@ export const KIMI_MODELS = [
     tier: 'free',
     contextWindow: 262144, // 256k context
     maxOutput: 8192
-  },
-  {
-    id: 'kimi-k2.5-thinking',
-    name: 'Kimi K2.5 (Thinking)',
-    tier: 'free',
-    contextWindow: 262144,
-    maxOutput: 8192
   }
 ];
 
-// Thinking mode models that return reasoning_content
-const THINKING_MODELS = ['kimi-k2.5-thinking'];
+// Map our model IDs to Together AI model IDs
+const MODEL_ID_MAP = {
+  'kimi-k2.5': 'moonshotai/Kimi-K2.5'
+};
 
 // Convert our message format to OpenAI format (Kimi is OpenAI-compatible)
 function convertMessages(messages) {
@@ -70,10 +65,8 @@ export async function chat({
   maxTokens = 4096,
   stream = false
 }) {
-  const isThinkingMode = THINKING_MODELS.includes(model);
-
-  // Use the base model ID for API calls (strip -thinking suffix for API)
-  const apiModel = model.replace('-thinking', '');
+  // Map to Together AI model ID
+  const apiModel = MODEL_ID_MAP[model] || model;
 
   const params = {
     model: apiModel,
@@ -81,8 +74,7 @@ export async function chat({
     max_tokens: maxTokens,
     stream,
     // Kimi recommended settings
-    // Thinking mode: temperature=1.0, Instant mode: temperature=0.6
-    temperature: isThinkingMode ? 1.0 : (temperature ?? 0.6),
+    temperature: temperature ?? 0.6,
     top_p: 0.95
   };
 
@@ -92,13 +84,8 @@ export async function chat({
 
   const response = await client.chat.completions.create(params);
 
-  // Extract reasoning content if present (thinking mode)
   const choice = response.choices[0];
   let content = choice?.message?.content || '';
-
-  // If there's reasoning_content, we could include it in metadata
-  // For now, we just return the main content
-  const reasoningContent = choice?.message?.reasoning_content;
 
   return {
     id: response.id,
@@ -110,9 +97,7 @@ export async function chat({
       promptTokens: response.usage?.prompt_tokens || 0,
       completionTokens: response.usage?.completion_tokens || 0,
       totalTokens: response.usage?.total_tokens || 0
-    },
-    // Include reasoning if available
-    ...(reasoningContent && { reasoning: reasoningContent })
+    }
   };
 }
 
@@ -160,8 +145,8 @@ export async function chatWithTools({
   maxTokens = 4096,
   webSearchEnabled = false // Ignored - search handled by Tavily service
 }) {
-  const isThinkingMode = THINKING_MODELS.includes(model);
-  const apiModel = model.replace('-thinking', '');
+  // Map to Together AI model ID
+  const apiModel = MODEL_ID_MAP[model] || model;
 
   const params = {
     model: apiModel,
@@ -175,7 +160,7 @@ export async function chatWithTools({
       }
     })),
     max_tokens: maxTokens,
-    temperature: isThinkingMode ? 1.0 : (temperature ?? 0.6),
+    temperature: temperature ?? 0.6,
     top_p: 0.95
   };
 
