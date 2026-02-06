@@ -5,6 +5,7 @@ import { requireAuth, attachSubscription } from '../middleware/auth.js';
 import {
   chat,
   chatWithTools,
+  chatWithToolsStream,
   embed,
   getAvailableModels,
   isModelAllowed,
@@ -143,7 +144,7 @@ router.post('/chat', chatValidation, async (req, res) => {
   }
 });
 
-// POST /api/llm/chat-with-tools - Chat with function calling
+// POST /api/llm/chat-with-tools - Chat with function calling (streaming and non-streaming)
 router.post('/chat-with-tools', [
   ...chatValidation,
   body('tools').isArray({ min: 1 }).withMessage('Tools array required'),
@@ -165,6 +166,7 @@ router.post('/chat-with-tools', [
       tools,
       temperature = 0.7,
       maxTokens = 4096,
+      stream = false,
       webSearchEnabled = false
     } = req.body;
 
@@ -180,18 +182,68 @@ router.post('/chat-with-tools', [
       });
     }
 
-    const response = await chatWithTools({
-      userId: req.user.id,
-      provider,
-      model,
-      messages,
-      tools,
-      temperature,
-      maxTokens,
-      webSearchEnabled
-    });
+    if (stream) {
+      // Streaming SSE response
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
 
-    res.json(response);
+      try {
+        const streamResult = await chatWithToolsStream({
+          userId: req.user.id,
+          provider,
+          model,
+          messages,
+          tools,
+          temperature,
+          maxTokens,
+          webSearchEnabled
+        });
+
+        for await (const chunk of streamResult.stream) {
+          if (chunk.type === 'content') {
+            res.write(`data: ${JSON.stringify({ type: 'content', content: chunk.content })}\n\n`);
+          } else if (chunk.type === 'tool_call') {
+            res.write(`data: ${JSON.stringify({ type: 'tool_call', toolCall: chunk.toolCall })}\n\n`);
+          } else if (chunk.type === 'done') {
+            // Send sources if available
+            if (streamResult.sources && streamResult.sources.length > 0) {
+              res.write(`data: ${JSON.stringify({ type: 'sources', sources: streamResult.sources })}\n\n`);
+            }
+            res.write(`data: ${JSON.stringify({
+              type: 'done',
+              finishReason: chunk.finishReason,
+              usage: chunk.usage
+            })}\n\n`);
+          }
+        }
+
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch (error) {
+        if (error.code === 'QUOTA_EXCEEDED') {
+          res.write(`data: ${JSON.stringify({ type: 'error', error: 'quota_exceeded', quota: error.quota })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+        }
+        res.end();
+      }
+    } else {
+      // Non-streaming response
+      const response = await chatWithTools({
+        userId: req.user.id,
+        provider,
+        model,
+        messages,
+        tools,
+        temperature,
+        maxTokens,
+        webSearchEnabled
+      });
+
+      res.json(response);
+    }
   } catch (error) {
     logger.error({ error: error?.message || error }, 'LLM tools error');
 
@@ -298,6 +350,121 @@ router.post('/embed', embedValidation, async (req, res) => {
     }
 
     res.status(500).json({ error: 'Embedding request failed' });
+  }
+});
+
+// POST /api/llm/fetch-page - Fetch and extract readable content from a URL
+const fetchPageLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many page fetch requests. Max 10 per minute.' },
+  keyGenerator: (req) => req.user.id.toString()
+});
+
+function isBlockedUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block localhost variants
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1') return true;
+
+    // Block .local and .internal domains
+    if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return true;
+
+    // Block cloud metadata endpoints
+    if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal') return true;
+
+    // Block private IP ranges (10.x, 172.16-31.x, 192.168.x)
+    const parts = hostname.split('.').map(Number);
+    if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+      if (parts[0] === 10) return true;
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+      if (parts[0] === 192 && parts[1] === 168) return true;
+    }
+
+    // Block non-http(s) schemes
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+
+    return false;
+  } catch { return true; }
+}
+
+router.post('/fetch-page', [
+  body('url').isURL().withMessage('Valid URL required')
+], fetchPageLimiter, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { url } = req.body;
+
+    if (isBlockedUrl(url)) {
+      return res.status(400).json({ error: 'URL not allowed: internal or private addresses are blocked' });
+    }
+
+    // Fetch the URL with timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Midlight/1.0 (Document Editor; +https://midlight.ai)',
+          'Accept': 'text/html,application/xhtml+xml',
+        },
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        return res.status(502).json({ error: `Failed to fetch URL: ${response.status} ${response.statusText}` });
+      }
+
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength) > 5 * 1024 * 1024) {
+        return res.status(413).json({ error: 'Page too large (>5MB)' });
+      }
+
+      const html = await response.text();
+      if (html.length > 5 * 1024 * 1024) {
+        return res.status(413).json({ error: 'Page content too large (>5MB)' });
+      }
+
+      // Use JSDOM + Readability to extract content
+      const { JSDOM } = await import('jsdom');
+      const { Readability } = await import('@mozilla/readability');
+
+      const dom = new JSDOM(html, { url });
+      const reader = new Readability(dom.window.document);
+      const article = reader.parse();
+
+      if (!article) {
+        return res.status(422).json({ error: 'Could not extract readable content from the page' });
+      }
+
+      // Convert to plain text (strip HTML tags from article.content)
+      const textContent = article.textContent || '';
+      const wordCount = textContent.split(/\s+/).filter(Boolean).length;
+
+      res.json({
+        url,
+        title: article.title || '',
+        content: textContent.substring(0, 50000), // Cap at 50k chars
+        wordCount,
+      });
+    } catch (fetchError) {
+      clearTimeout(timeout);
+      if (fetchError.name === 'AbortError') {
+        return res.status(504).json({ error: 'URL fetch timed out (10s limit)' });
+      }
+      throw fetchError;
+    }
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Fetch page error');
+    res.status(500).json({ error: 'Failed to fetch page' });
   }
 });
 

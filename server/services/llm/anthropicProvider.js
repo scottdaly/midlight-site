@@ -238,6 +238,108 @@ export async function chatWithTools({
   };
 }
 
+export async function* chatWithToolsStream({
+  model,
+  messages,
+  tools,
+  temperature = 0.7,
+  maxTokens = 4096,
+  webSearchEnabled = false
+}) {
+  const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+
+  const anthropicTools = tools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters
+  }));
+
+  const params = {
+    model,
+    max_tokens: maxTokens,
+    messages: anthropicMessages,
+    ...(systemMessage && { system: systemMessage }),
+    ...(anthropicTools.length > 0 && { tools: anthropicTools })
+  };
+
+  const stream = await client.messages.stream(params);
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let currentToolCall = null;
+  let currentToolInput = '';
+
+  for await (const event of stream) {
+    if (event.type === 'message_start' && event.message?.usage) {
+      promptTokens = event.message.usage.input_tokens;
+    }
+
+    if (event.type === 'content_block_start') {
+      if (event.content_block?.type === 'tool_use') {
+        currentToolCall = {
+          id: event.content_block.id,
+          name: event.content_block.name,
+        };
+        currentToolInput = '';
+      }
+    }
+
+    if (event.type === 'content_block_delta') {
+      if (event.delta.type === 'text_delta') {
+        yield { type: 'content', content: event.delta.text };
+      } else if (event.delta.type === 'input_json_delta' && currentToolCall) {
+        currentToolInput += event.delta.partial_json;
+      }
+    }
+
+    if (event.type === 'content_block_stop' && currentToolCall) {
+      try {
+        const args = currentToolInput ? JSON.parse(currentToolInput) : {};
+        yield {
+          type: 'tool_call',
+          toolCall: {
+            id: currentToolCall.id,
+            name: currentToolCall.name,
+            arguments: args
+          }
+        };
+      } catch (parseError) {
+        console.warn(`[Anthropic] Failed to parse streamed tool call arguments for "${currentToolCall.name}": ${parseError.message}`, currentToolInput.substring(0, 200));
+        yield {
+          type: 'tool_call',
+          toolCall: {
+            id: currentToolCall.id,
+            name: currentToolCall.name,
+            arguments: {}
+          }
+        };
+      }
+      currentToolCall = null;
+      currentToolInput = '';
+    }
+
+    if (event.type === 'message_delta') {
+      if (event.usage) {
+        completionTokens = event.usage.output_tokens;
+      }
+    }
+  }
+
+  const finalMessage = await stream.finalMessage();
+  promptTokens = finalMessage.usage?.input_tokens || promptTokens;
+  completionTokens = finalMessage.usage?.output_tokens || completionTokens;
+
+  yield {
+    type: 'done',
+    finishReason: finalMessage.stop_reason,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens
+    }
+  };
+}
+
 export function isConfigured() {
   return !!process.env.ANTHROPIC_API_KEY;
 }

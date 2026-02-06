@@ -242,6 +242,108 @@ export async function chatWithTools({
   };
 }
 
+export async function chatWithToolsStream({
+  userId,
+  provider,
+  model,
+  messages,
+  tools,
+  temperature = 0.7,
+  maxTokens = 4096,
+  requestType = 'agent',
+  webSearchEnabled = false
+}) {
+  // Check quota
+  const quota = await checkQuota(userId);
+  if (!quota.allowed) {
+    const error = new Error('Monthly quota exceeded');
+    error.code = 'QUOTA_EXCEEDED';
+    error.quota = quota;
+    throw error;
+  }
+
+  // Get provider
+  const providerService = getProvider(provider);
+
+  if (!providerService.isConfigured()) {
+    throw new Error(`Provider ${provider} is not configured`);
+  }
+
+  if (!providerService.chatWithToolsStream) {
+    throw new Error(`Provider ${provider} does not support streaming with tools`);
+  }
+
+  // Run search pipeline (same as non-streaming)
+  let searchResult = null;
+  let messagesWithSearch = messages;
+  let sources = [];
+
+  if (webSearchEnabled && searchService.isConfigured()) {
+    try {
+      const recentContext = messages
+        .slice(-6)
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => `${m.role}: ${(m.content || '').substring(0, 200)}`)
+        .join('\n');
+
+      const lastUserMessage = messages
+        .filter(m => m.role === 'user')
+        .pop()?.content || '';
+
+      searchResult = await searchService.executeSearchPipeline({
+        userId,
+        message: lastUserMessage,
+        conversationContext: recentContext
+      });
+
+      if (searchResult.searchExecuted && searchResult.formattedContext) {
+        messagesWithSearch = searchService.injectSearchContext(
+          messages,
+          searchResult.formattedContext
+        );
+      }
+
+      if (searchResult.searchExecuted && searchResult.results?.length > 0) {
+        sources = searchResult.results.map(r => ({
+          url: r.url,
+          title: r.title || '',
+          snippet: (r.content || '').substring(0, 200)
+        }));
+      }
+    } catch (error) {
+      console.warn('[LLM] Search pipeline failed for streaming, continuing without:', error.message);
+    }
+  }
+
+  // Create the streaming generator with usage tracking wrapper
+  const providerStream = providerService.chatWithToolsStream({
+    model,
+    messages: messagesWithSearch,
+    tools,
+    temperature,
+    maxTokens,
+    webSearchEnabled: false
+  });
+
+  async function* streamWithTracking() {
+    let finalUsage = null;
+    for await (const chunk of providerStream) {
+      if (chunk.type === 'done') {
+        finalUsage = chunk.usage;
+      }
+      yield chunk;
+    }
+    if (finalUsage) {
+      await trackUsage(userId, provider, model, finalUsage, requestType);
+    }
+  }
+
+  return {
+    stream: streamWithTracking(),
+    sources
+  };
+}
+
 export function getAvailableModels(tier = 'free') {
   const models = {
     openai: [],
