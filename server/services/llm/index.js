@@ -185,7 +185,7 @@ export async function chatWithTools({
         userId,
         message: lastUserMessage,
         conversationContext: recentContext,
-        limits: CONFIG.search.limits[userTier] || CONFIG.search.limits.free
+        limits: CONFIG.search.limits[userTier] || (console.warn(`[LLM] Unknown search tier '${userTier}', falling back to free limits`), CONFIG.search.limits.free)
       });
 
       console.log(`[LLM] Search result: executed=${searchResult.searchExecuted}, results=${searchResult.results?.length || 0}, skipReason=${searchResult.skipReason}`);
@@ -274,7 +274,21 @@ export async function chatWithToolsStream({
   }
 
   if (!providerService.chatWithToolsStream) {
-    throw new Error(`Provider ${provider} does not support streaming with tools`);
+    // Fall back to non-streaming for providers without stream support
+    const response = await providerService.chatWithTools({ model, messages: messagesWithSearch, tools, temperature, maxTokens, webSearchEnabled: false });
+    async function* nonStreamingFallback() {
+      if (response.content) {
+        yield { type: 'content', content: response.content };
+      }
+      if (response.toolCalls) {
+        for (const tc of response.toolCalls) {
+          yield { type: 'tool_call', toolCall: tc };
+        }
+      }
+      yield { type: 'done', finishReason: response.finishReason, usage: response.usage };
+    }
+    await trackUsage(userId, provider, model, response.usage, requestType);
+    return { stream: nonStreamingFallback(), sources };
   }
 
   // Run search pipeline (same as non-streaming)
@@ -298,7 +312,7 @@ export async function chatWithToolsStream({
         userId,
         message: lastUserMessage,
         conversationContext: recentContext,
-        limits: CONFIG.search.limits[userTier] || CONFIG.search.limits.free
+        limits: CONFIG.search.limits[userTier] || (console.warn(`[LLM] Unknown search tier '${userTier}', falling back to free limits`), CONFIG.search.limits.free)
       });
 
       if (searchResult.searchExecuted && searchResult.formattedContext) {

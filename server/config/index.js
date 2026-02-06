@@ -163,6 +163,10 @@ export const CONFIG = {
         maxSearchesPerDay: 100,
         maxCostPerMonthCents: 1000, // $10
       },
+      enterprise: {
+        maxSearchesPerDay: 200,
+        maxCostPerMonthCents: 2000, // $20
+      },
     },
     // Cleanup interval for expired cache
     cacheCleanupIntervalMs: 60 * 60 * 1000, // 1 hour

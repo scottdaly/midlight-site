@@ -390,7 +390,11 @@ const fetchPageLimiter = rateLimit({
 function isBlockedUrl(urlStr) {
   try {
     const parsed = new URL(urlStr);
-    const hostname = parsed.hostname.toLowerCase();
+    // Strip brackets from IPv6 hostnames (URL parser keeps them)
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+    // Block non-http(s) schemes
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
 
     // Block localhost variants
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1') return true;
@@ -401,7 +405,7 @@ function isBlockedUrl(urlStr) {
     // Block cloud metadata endpoints
     if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal') return true;
 
-    // Block private IP ranges (10.x, 172.16-31.x, 192.168.x)
+    // Block private IPv4 ranges (10.x, 172.16-31.x, 192.168.x)
     const parts = hostname.split('.').map(Number);
     if (parts.length === 4 && parts.every(p => !isNaN(p))) {
       if (parts[0] === 10) return true;
@@ -409,8 +413,25 @@ function isBlockedUrl(urlStr) {
       if (parts[0] === 192 && parts[1] === 168) return true;
     }
 
-    // Block non-http(s) schemes
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    // Block IPv6 link-local (fe80::/10)
+    if (hostname.startsWith('fe80:') || hostname.startsWith('fe80')) return true;
+
+    // Block IPv6 unique-local (fc00::/7 — fc and fd prefixes)
+    if (hostname.startsWith('fc') || hostname.startsWith('fd')) return true;
+
+    // Block IPv4-mapped IPv6 (::ffff:x.x.x.x) with private IPv4
+    if (hostname.startsWith('::ffff:')) {
+      const mappedIp = hostname.slice(7); // strip "::ffff:"
+      const mappedParts = mappedIp.split('.').map(Number);
+      if (mappedParts.length === 4 && mappedParts.every(p => !isNaN(p))) {
+        if (mappedParts[0] === 127) return true;
+        if (mappedParts[0] === 10) return true;
+        if (mappedParts[0] === 172 && mappedParts[1] >= 16 && mappedParts[1] <= 31) return true;
+        if (mappedParts[0] === 192 && mappedParts[1] === 168) return true;
+        if (mappedParts[0] === 169 && mappedParts[1] === 254) return true;
+        if (mappedParts[0] === 0) return true;
+      }
+    }
 
     return false;
   } catch { return true; }
@@ -444,12 +465,26 @@ router.post('/fetch-page', [
     try {
       const response = await fetch(url, {
         signal: controller.signal,
+        redirect: 'manual',
         headers: {
           'User-Agent': 'Midlight/1.0 (Document Editor; +https://midlight.ai)',
           'Accept': 'text/html,application/xhtml+xml',
         },
       });
       clearTimeout(timeout);
+
+      // Handle redirects: validate the Location header before following
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          return res.status(502).json({ error: 'Redirect with no Location header' });
+        }
+        const redirectUrl = new URL(location, url).href;
+        if (isBlockedUrl(redirectUrl)) {
+          return res.status(400).json({ error: 'Redirect target is a blocked URL' });
+        }
+        return res.status(400).json({ error: 'Redirects are not followed. Target: ' + redirectUrl });
+      }
 
       if (!response.ok) {
         return res.status(502).json({ error: `Failed to fetch URL: ${response.status} ${response.statusText}` });
