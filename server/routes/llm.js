@@ -198,7 +198,8 @@ router.post('/chat-with-tools', [
           tools,
           temperature,
           maxTokens,
-          webSearchEnabled
+          webSearchEnabled,
+          userTier
         });
 
         for await (const chunk of streamResult.stream) {
@@ -239,7 +240,8 @@ router.post('/chat-with-tools', [
         tools,
         temperature,
         maxTokens,
-        webSearchEnabled
+        webSearchEnabled,
+        userTier
       });
 
       res.json(response);
@@ -353,6 +355,30 @@ router.post('/embed', embedValidation, async (req, res) => {
   }
 });
 
+// Page fetch cache (in-memory, 15 min TTL)
+const pageCache = new Map();
+const PAGE_CACHE_TTL_MS = 15 * 60 * 1000;
+
+function getCachedPage(url) {
+  const entry = pageCache.get(url);
+  if (entry && Date.now() - entry.timestamp < PAGE_CACHE_TTL_MS) {
+    return entry.data;
+  }
+  if (entry) pageCache.delete(url);
+  return null;
+}
+
+function setCachedPage(url, data) {
+  pageCache.set(url, { data, timestamp: Date.now() });
+  // Evict old entries if cache grows too large
+  if (pageCache.size > 200) {
+    const now = Date.now();
+    for (const [key, val] of pageCache) {
+      if (now - val.timestamp > PAGE_CACHE_TTL_MS) pageCache.delete(key);
+    }
+  }
+}
+
 // POST /api/llm/fetch-page - Fetch and extract readable content from a URL
 const fetchPageLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -405,6 +431,12 @@ router.post('/fetch-page', [
       return res.status(400).json({ error: 'URL not allowed: internal or private addresses are blocked' });
     }
 
+    // Check cache first
+    const cached = getCachedPage(url);
+    if (cached) {
+      return res.json(cached);
+    }
+
     // Fetch the URL with timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -449,12 +481,14 @@ router.post('/fetch-page', [
       const textContent = article.textContent || '';
       const wordCount = textContent.split(/\s+/).filter(Boolean).length;
 
-      res.json({
+      const result = {
         url,
         title: article.title || '',
-        content: textContent.substring(0, 50000), // Cap at 50k chars
+        content: textContent.substring(0, 100000), // Cap at 100k chars
         wordCount,
-      });
+      };
+      setCachedPage(url, result);
+      res.json(result);
     } catch (fetchError) {
       clearTimeout(timeout);
       if (fetchError.name === 'AbortError') {

@@ -4,6 +4,7 @@ import * as geminiProvider from './geminiProvider.js';
 import * as kimiProvider from './kimiProvider.js';
 import { checkQuota, trackUsage } from './quotaManager.js';
 import * as searchService from '../search/index.js';
+import { CONFIG } from '../../config/index.js';
 
 // Combined model configuration
 export const MODELS = {
@@ -141,7 +142,8 @@ export async function chatWithTools({
   temperature = 0.7,
   maxTokens = 4096,
   requestType = 'agent',
-  webSearchEnabled = false
+  webSearchEnabled = false,
+  userTier = 'free'
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -182,7 +184,8 @@ export async function chatWithTools({
       searchResult = await searchService.executeSearchPipeline({
         userId,
         message: lastUserMessage,
-        conversationContext: recentContext
+        conversationContext: recentContext,
+        limits: CONFIG.search.limits[userTier] || CONFIG.search.limits.free
       });
 
       console.log(`[LLM] Search result: executed=${searchResult.searchExecuted}, results=${searchResult.results?.length || 0}, skipReason=${searchResult.skipReason}`);
@@ -251,7 +254,8 @@ export async function chatWithToolsStream({
   temperature = 0.7,
   maxTokens = 4096,
   requestType = 'agent',
-  webSearchEnabled = false
+  webSearchEnabled = false,
+  userTier = 'free'
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -293,7 +297,8 @@ export async function chatWithToolsStream({
       searchResult = await searchService.executeSearchPipeline({
         userId,
         message: lastUserMessage,
-        conversationContext: recentContext
+        conversationContext: recentContext,
+        limits: CONFIG.search.limits[userTier] || CONFIG.search.limits.free
       });
 
       if (searchResult.searchExecuted && searchResult.formattedContext) {
