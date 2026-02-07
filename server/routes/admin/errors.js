@@ -6,9 +6,9 @@
  */
 
 import express from 'express';
-import db from '../db/index.js';
-import { logger } from '../utils/logger.js';
-import { getIssueStats } from '../services/errorAggregator.js';
+import db from '../../db/index.js';
+import { logger } from '../../utils/logger.js';
+import { getIssueStats } from '../../services/errorAggregator.js';
 
 const router = express.Router();
 

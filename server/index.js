@@ -16,7 +16,7 @@ import llmRouter from './routes/llm.js';
 import subscriptionRouter from './routes/subscription.js';
 import stripeWebhookRouter from './routes/stripeWebhook.js';
 import healthRouter from './routes/health.js';
-import adminRouter from './routes/admin.js';
+import adminRouter from './routes/admin/index.js';
 import syncRouter from './routes/sync.js';
 import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
