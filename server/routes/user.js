@@ -15,6 +15,7 @@ import {
   recordPasswordAttempt,
   getRemainingPasswordAttempts
 } from '../middleware/rateLimiters.js';
+import { checkQuota, getQuotaLimit, getResetsAt } from '../services/llm/quotaManager.js';
 import db from '../db/index.js';
 
 const router = Router();
@@ -60,12 +61,7 @@ router.get('/profile', (req, res) => {
     `);
     const rollup = rollupStmt.get(req.user.id, currentMonth);
 
-    const limits = {
-      free: 100,
-      premium: Infinity,
-      pro: Infinity
-    };
-    const limit = limits[req.subscription.tier] || limits.free;
+    const limit = getQuotaLimit(req.subscription.tier);
     const used = rollup?.request_count || 0;
 
     res.json({
@@ -87,7 +83,8 @@ router.get('/profile', (req, res) => {
         tier: req.subscription.tier,
         limit: limit === Infinity ? null : limit,
         used,
-        remaining: limit === Infinity ? null : Math.max(0, limit - used)
+        remaining: limit === Infinity ? null : Math.max(0, limit - used),
+        resetsAt: getResetsAt()
       }
     });
   } catch (error) {
@@ -228,12 +225,7 @@ router.get('/usage', (req, res) => {
     const rollup = rollupStmt.get(req.user.id, currentMonth);
 
     // Get limit based on tier
-    const limits = {
-      free: 100,
-      pro: Infinity,
-      premium: Infinity
-    };
-    const limit = limits[req.subscription.tier] || limits.free;
+    const limit = getQuotaLimit(req.subscription.tier);
 
     // Get breakdown by provider
     const breakdownStmt = db.prepare(`
@@ -256,7 +248,8 @@ router.get('/usage', (req, res) => {
       quota: {
         used,
         limit: limit === Infinity ? null : limit,
-        remaining
+        remaining,
+        resetsAt: getResetsAt()
       },
       byProvider: breakdown.reduce((acc, row) => {
         acc[row.provider] = {
@@ -269,6 +262,24 @@ router.get('/usage', (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Get usage error');
     res.status(500).json({ error: 'Failed to get usage' });
+  }
+});
+
+// GET /api/user/quota - Get current quota status (used by web subscription client)
+router.get('/quota', async (req, res) => {
+  try {
+    const quota = await checkQuota(req.user.id);
+
+    res.json({
+      tier: quota.tier,
+      limit: quota.limit,
+      used: quota.used,
+      remaining: quota.remaining,
+      resetsAt: quota.resetsAt
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Get user quota error');
+    res.status(500).json({ error: 'Failed to get quota' });
   }
 });
 

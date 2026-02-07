@@ -1,12 +1,6 @@
 import db from '../../db/index.js';
 import { getUserSubscription } from '../authService.js';
-
-// Quota limits by tier
-const LIMITS = {
-  free: 100,      // requests per month
-  premium: Infinity,
-  pro: Infinity
-};
+import { CONFIG } from '../../config/index.js';
 
 // Rate limits by tier (requests per minute)
 const RATE_LIMITS = {
@@ -15,10 +9,19 @@ const RATE_LIMITS = {
   pro: 60
 };
 
+/**
+ * Get the ISO timestamp for when the current quota period resets (1st of next month UTC)
+ */
+export function getResetsAt() {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return next.toISOString();
+}
+
 export async function checkQuota(userId) {
   const subscription = getUserSubscription(userId);
   const tier = subscription?.tier || 'free';
-  const limit = LIMITS[tier] ?? LIMITS.free; // Fallback to free tier if unknown
+  const limit = getQuotaLimit(tier);
 
   if (limit === Infinity) {
     return {
@@ -26,7 +29,8 @@ export async function checkQuota(userId) {
       tier,
       limit: null,
       used: null,
-      remaining: null
+      remaining: null,
+      resetsAt: getResetsAt()
     };
   }
 
@@ -46,7 +50,8 @@ export async function checkQuota(userId) {
     tier,
     limit,
     used,
-    remaining: Math.max(0, limit - used)
+    remaining: Math.max(0, limit - used),
+    resetsAt: getResetsAt()
   };
 }
 
@@ -84,7 +89,7 @@ export function getUsageStats(userId) {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const subscription = getUserSubscription(userId);
   const tier = subscription?.tier || 'free';
-  const limit = LIMITS[tier] ?? LIMITS.free; // Fallback to free tier if unknown
+  const limit = getQuotaLimit(tier);
 
   // Get monthly rollup
   const rollupStmt = db.prepare(`
@@ -128,6 +133,7 @@ export function getUsageStats(userId) {
     limit: limit === Infinity ? null : limit,
     used: rollup?.request_count || 0,
     remaining: limit === Infinity ? null : Math.max(0, limit - (rollup?.request_count || 0)),
+    resetsAt: getResetsAt(),
     totalTokens: rollup?.total_tokens || 0,
     breakdown: breakdown.map(row => ({
       provider: row.provider,
@@ -150,5 +156,6 @@ export function getRateLimit(tier = 'free') {
 }
 
 export function getQuotaLimit(tier = 'free') {
-  return LIMITS[tier] || LIMITS.free;
+  const tierConfig = CONFIG.quota[tier] || CONFIG.quota.free;
+  return tierConfig.monthlyRequests;
 }

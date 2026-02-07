@@ -286,7 +286,8 @@ router.get('/quota', async (req, res) => {
       tier: quota.tier,
       limit: quota.limit,
       used: quota.used,
-      remaining: quota.remaining
+      remaining: quota.remaining,
+      resetsAt: quota.resetsAt
     });
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Get quota error');

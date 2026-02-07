@@ -43,6 +43,15 @@ function getProvider(providerName) {
   }
 }
 
+/**
+ * Cap maxTokens based on the user's subscription tier
+ */
+function capMaxTokens(maxTokens, tier) {
+  const tierConfig = CONFIG.quota[tier] || CONFIG.quota.free;
+  const tierMax = tierConfig.maxTokensPerRequest;
+  return tierMax ? Math.min(maxTokens, tierMax) : maxTokens;
+}
+
 export async function chat({
   userId,
   provider,
@@ -61,6 +70,9 @@ export async function chat({
     error.quota = quota;
     throw error;
   }
+
+  // Cap maxTokens by tier
+  maxTokens = capMaxTokens(maxTokens, quota.tier);
 
   // Get provider
   const providerService = getProvider(provider);
@@ -153,6 +165,9 @@ export async function chatWithTools({
     error.quota = quota;
     throw error;
   }
+
+  // Cap maxTokens by tier
+  maxTokens = capMaxTokens(maxTokens, quota.tier);
 
   // Get provider
   const providerService = getProvider(provider);
@@ -265,6 +280,9 @@ export async function chatWithToolsStream({
     error.quota = quota;
     throw error;
   }
+
+  // Cap maxTokens by tier
+  maxTokens = capMaxTokens(maxTokens, quota.tier);
 
   // Get provider
   const providerService = getProvider(provider);
