@@ -19,6 +19,7 @@ import healthRouter from './routes/health.js';
 import adminRouter from './routes/admin.js';
 import syncRouter from './routes/sync.js';
 import marketplaceRouter from './routes/marketplace.js';
+import ragRouter from './routes/rag.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions } from './services/tokenService.js';
 import { getProviderStatus } from './services/llm/index.js';
@@ -150,6 +151,7 @@ app.use('/api/llm', conditionalCsrf);
 app.use('/api/subscription', conditionalCsrf);
 app.use('/api/sync', conditionalCsrf);
 app.use('/api/marketplace', conditionalCsrf);
+app.use('/api/rag', conditionalCsrf);
 
 // CSRF token endpoint for web clients
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
@@ -261,6 +263,7 @@ app.use('/api/llm', llmRouter);
 app.use('/api/subscription', subscriptionRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/marketplace', marketplaceRouter);
+app.use('/api/rag', ragRouter);
 app.use('/api/admin', adminRouter);
 
 // Health check endpoints (no auth required)

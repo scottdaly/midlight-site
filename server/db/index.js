@@ -82,6 +82,53 @@ function runMigrations() {
         console.log('Migration: Added search_count to llm_usage_monthly table');
       }
     },
+    // Create RAG tables for web semantic search
+    {
+      name: 'create_rag_tables',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rag_chunks'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS rag_chunks (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            document_path TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            heading TEXT,
+            embedding BLOB NOT NULL,
+            token_estimate INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(document_id, chunk_index)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_rag_chunks_user ON rag_chunks(user_id);
+          CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks(document_id);
+
+          CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
+            content, heading,
+            content='rag_chunks', content_rowid='rowid',
+            tokenize='porter unicode61'
+          );
+
+          CREATE TABLE IF NOT EXISTS rag_indexed_documents (
+            user_id INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            document_path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            total_chars INTEGER NOT NULL DEFAULT 0,
+            indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, document_id)
+          );
+        `);
+        console.log('Migration: Created RAG tables (rag_chunks, rag_chunks_fts, rag_indexed_documents)');
+      }
+    },
   ];
 
   for (const migration of migrations) {

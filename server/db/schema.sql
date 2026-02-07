@@ -482,4 +482,52 @@ CREATE TABLE IF NOT EXISTS user_private_skills (
   UNIQUE(user_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_private_skills_user ON user_private_skills(user_id)
+CREATE INDEX IF NOT EXISTS idx_user_private_skills_user ON user_private_skills(user_id);
+
+-- ============================================================================
+-- RAG (Retrieval Augmented Generation) SYSTEM
+-- Server-side RAG for web app users with synced documents
+-- ============================================================================
+
+-- RAG Chunks (embedded document fragments)
+CREATE TABLE IF NOT EXISTS rag_chunks (
+  id TEXT PRIMARY KEY,                    -- "{user_id}:{doc_id}:{chunk_index}"
+  user_id INTEGER NOT NULL,
+  document_id TEXT NOT NULL,
+  document_path TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  heading TEXT,
+  embedding BLOB NOT NULL,               -- Float32 little-endian bytes
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(document_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_user ON rag_chunks(user_id);
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks(document_id);
+
+-- FTS5 virtual table for BM25 text search
+CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
+  content, heading,
+  content='rag_chunks', content_rowid='rowid',
+  tokenize='porter unicode61'
+);
+
+-- FTS sync is handled manually by ragService.js (insertFts/deleteFts functions)
+-- Do NOT add triggers here — they conflict with manual FTS management.
+
+-- RAG Indexed Documents (tracks which docs have been indexed + their content hash)
+CREATE TABLE IF NOT EXISTS rag_indexed_documents (
+  user_id INTEGER NOT NULL,
+  document_id TEXT NOT NULL,
+  document_path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,             -- Compare against sync_documents.content_hash
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  total_chars INTEGER NOT NULL DEFAULT 0,
+  indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, document_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rag_indexed_documents_user ON rag_indexed_documents(user_id);
