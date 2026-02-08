@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../../db/index.js';
 import { logger } from '../../utils/logger.js';
+import { computeCostCents } from '../../config/llmPricing.js';
 
 const router = express.Router();
 
@@ -120,6 +121,53 @@ router.get('/:id', (req, res) => {
       WHERE user_id = ? AND month = ?
     `).get(id, currentMonth);
 
+    // Usage breakdown by provider/model with cost
+    const breakdown = db.prepare(`
+      SELECT
+        provider, model,
+        COUNT(*) as requests,
+        COALESCE(SUM(prompt_tokens), 0) as promptTokens,
+        COALESCE(SUM(completion_tokens), 0) as completionTokens,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE user_id = ? AND created_at >= date('now', 'start of month')
+      GROUP BY provider, model
+      ORDER BY requests DESC
+    `).all(id).map(row => ({
+      ...row,
+      costCents: computeCostCents(row.provider, row.model, row.promptTokens, row.completionTokens)
+    }));
+
+    // Daily usage with cost
+    const dailyRaw = db.prepare(`
+      SELECT
+        date(created_at) as date,
+        provider, model,
+        COUNT(*) as requests,
+        COALESCE(SUM(prompt_tokens), 0) as promptTokens,
+        COALESCE(SUM(completion_tokens), 0) as completionTokens,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE user_id = ? AND created_at >= date('now', 'start of month')
+      GROUP BY date(created_at), provider, model
+      ORDER BY date ASC
+    `).all(id);
+
+    const dateMap = {};
+    for (const row of dailyRaw) {
+      if (!dateMap[row.date]) {
+        dateMap[row.date] = { date: row.date, requests: 0, tokens: 0, costCents: 0 };
+      }
+      dateMap[row.date].requests += row.requests;
+      dateMap[row.date].tokens += row.tokens;
+      dateMap[row.date].costCents += computeCostCents(row.provider, row.model, row.promptTokens, row.completionTokens);
+    }
+    const usageDaily = Object.values(dateMap)
+      .map(d => ({ ...d, costCents: Math.round(d.costCents * 100) / 100 }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const totalCostCents = breakdown.reduce((sum, r) => sum + r.costCents, 0);
+
     const sessions = db.prepare(`
       SELECT id, created_at as createdAt, expires_at as expiresAt
       FROM sessions
@@ -140,7 +188,11 @@ router.get('/:id', (req, res) => {
       usage: {
         requestsThisMonth: llmUsage?.request_count || 0,
         tokensThisMonth: llmUsage?.total_tokens || 0,
-        searchesThisMonth: searchUsage?.search_count || 0
+        searchesThisMonth: searchUsage?.search_count || 0,
+        totalCostCents: Math.round(totalCostCents * 100) / 100,
+        totalCostDollars: (totalCostCents / 100).toFixed(2),
+        breakdown,
+        daily: usageDaily
       },
       sessions,
       oauthAccounts
