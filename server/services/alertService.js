@@ -197,13 +197,27 @@ async function checkSpike(rule, issue) {
  */
 async function triggerAlert(rule, issue) {
   try {
-    // Record the alert
-    const result = db.prepare(`
-      INSERT INTO alert_history (rule_id, issue_id, notification_sent)
-      VALUES (?, ?, 0)
-    `).run(rule.id, issue.id || null);
+    // Wrap check-and-insert in transaction to prevent duplicate alerts
+    const txn = db.transaction(() => {
+      // Check if we already have a recent alert for this rule+issue combo
+      const recentAlert = db.prepare(`
+        SELECT id FROM alert_history
+        WHERE rule_id = ? AND issue_id = ?
+          AND triggered_at > datetime('now', '-1 minute')
+      `).get(rule.id, issue.id || null);
 
-    const alertId = result.lastInsertRowid;
+      if (recentAlert) return null; // Already alerted recently
+
+      const result = db.prepare(`
+        INSERT INTO alert_history (rule_id, issue_id, notification_sent)
+        VALUES (?, ?, 0)
+      `).run(rule.id, issue.id || null);
+
+      return result.lastInsertRowid;
+    });
+
+    const alertId = txn();
+    if (alertId === null) return; // Duplicate alert prevented
 
     // Build email content
     const subject = buildSubject(rule, issue);

@@ -82,6 +82,18 @@ function runMigrations() {
         console.log('Migration: Added search_count to llm_usage_monthly table');
       }
     },
+    // Add stack_trace to error_reports table
+    {
+      name: 'add_stack_trace_to_error_reports',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_reports)").all();
+        return cols.some(c => c.name === 'stack_trace');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_reports ADD COLUMN stack_trace TEXT");
+        console.log('Migration: Added stack_trace to error_reports table');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',

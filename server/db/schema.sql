@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS error_reports (
   arch TEXT,
   os_version TEXT,
   context TEXT,
+  stack_trace TEXT,
   session_id TEXT,
   ip_hash TEXT,
   received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

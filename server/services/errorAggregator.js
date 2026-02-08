@@ -92,14 +92,13 @@ export function findOrCreateIssue(fingerprint, errorData) {
   const { category, errorType, message } = errorData;
   const messagePattern = normalizeMessage(message);
 
-  try {
-    // Try to find existing issue
+  // Wrap in transaction to prevent race conditions with concurrent requests
+  const txn = db.transaction(() => {
     const existingIssue = db.prepare(
       'SELECT * FROM error_issues WHERE fingerprint = ?'
     ).get(fingerprint);
 
     if (existingIssue) {
-      // Update existing issue
       db.prepare(`
         UPDATE error_issues
         SET occurrence_count = occurrence_count + 1,
@@ -107,7 +106,6 @@ export function findOrCreateIssue(fingerprint, errorData) {
         WHERE id = ?
       `).run(existingIssue.id);
 
-      // If issue was resolved, check if we should reopen it
       if (existingIssue.status === 'resolved') {
         logger.info({
           issueId: existingIssue.id,
@@ -122,7 +120,6 @@ export function findOrCreateIssue(fingerprint, errorData) {
       };
     }
 
-    // Create new issue
     const result = db.prepare(`
       INSERT INTO error_issues (
         fingerprint, category, error_type, message_pattern
@@ -147,7 +144,10 @@ export function findOrCreateIssue(fingerprint, errorData) {
     }, 'New error issue created');
 
     return newIssue;
+  });
 
+  try {
+    return txn();
   } catch (err) {
     logger.error({
       error: err?.message || err,

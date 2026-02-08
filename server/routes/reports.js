@@ -23,6 +23,7 @@ router.post('/error-report', (req, res) => {
       arch,
       osVersion,
       context,
+      stackTrace,
       sessionId,
       timestamp // Client provided timestamp, but we usually use server time for 'received_at'
     } = req.body;
@@ -44,6 +45,7 @@ router.post('/error-report', (req, res) => {
       'update',
       'crash',
       'uncaught',
+      'sync',
       'unknown'
     ];
 
@@ -58,13 +60,28 @@ router.post('/error-report', (req, res) => {
       return res.status(400).json({ error: 'Context must be a JSON object' });
     }
 
+    // Validate context size (prevent oversized payloads)
+    if (context) {
+      const contextStr = JSON.stringify(context);
+      if (contextStr.length > 50000) {
+        return res.status(400).json({ error: 'Context too large (max 50KB)' });
+      }
+      // Enforce flat key-value structure (no nested objects)
+      for (const value of Object.values(context)) {
+        if (value !== null && typeof value === 'object') {
+          return res.status(400).json({ error: 'Context values must be flat (no nested objects)' });
+        }
+      }
+    }
+
     const ipHash = hashIp(req.ip);
     const contextStr = context ? JSON.stringify(context) : null;
+    const stackTraceStr = typeof stackTrace === 'string' ? stackTrace.slice(0, 10000) : null;
 
     const stmt = db.prepare(`
       INSERT INTO error_reports (
-        category, error_type, message, app_version, platform, arch, os_version, context, session_id, ip_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        category, error_type, message, app_version, platform, arch, os_version, context, stack_trace, session_id, ip_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -76,6 +93,7 @@ router.post('/error-report', (req, res) => {
       arch || '',
       osVersion || '',
       contextStr,
+      stackTraceStr,
       sessionId,
       ipHash
     );

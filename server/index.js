@@ -22,6 +22,7 @@ import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions } from './services/tokenService.js';
+import db from './db/index.js';
 import { getProviderStatus } from './services/llm/index.js';
 import {
   errorHandler,
@@ -289,6 +290,26 @@ setInterval(() => {
     logger.error({ error: error.message }, 'Session cleanup error');
   }
 }, 60 * 60 * 1000);
+
+// Cleanup old error reports and alert history (daily, 90-day retention)
+setInterval(() => {
+  try {
+    const reports = db.prepare(
+      "DELETE FROM error_reports WHERE received_at < datetime('now', '-90 days')"
+    ).run();
+    const alerts = db.prepare(
+      "DELETE FROM alert_history WHERE triggered_at < datetime('now', '-90 days')"
+    ).run();
+    if (reports.changes > 0 || alerts.changes > 0) {
+      logger.info({
+        reportsRemoved: reports.changes,
+        alertsRemoved: alerts.changes
+      }, 'Cleaned up old error reports and alerts');
+    }
+  } catch (error) {
+    logger.error({ error: error.message }, 'Error report cleanup error');
+  }
+}, 24 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   const providers = getProviderStatus();
