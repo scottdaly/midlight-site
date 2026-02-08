@@ -1,26 +1,24 @@
-name: Deploy (DISABLED - marketing site merged into midlight-next web app)
+name: Deploy Backend
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'server/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 jobs:
   deploy:
-    name: Build and Deploy
+    name: Deploy Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v2
         with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
+          authkey: ${{ secrets.TS_AUTHKEY }}
 
       - name: Setup SSH
         run: |
@@ -29,7 +27,17 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to server
+      - name: Deploy and restart
         run: |
-          rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key" dist/ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/var/www/midlight-site/dist/
-          echo "Deployed marketing site"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+            set -e
+            cd /var/www/midlight-site
+            echo "Pulling latest..."
+            git pull
+            echo "Installing dependencies..."
+            npm ci --production
+            echo "Restarting backend..."
+            pm2 restart midlight-backend
+            pm2 status midlight-backend
+            echo "Deploy complete"
+          ENDSSH
