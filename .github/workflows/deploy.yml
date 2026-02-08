@@ -31,11 +31,12 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
             set -e
+            export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node/ | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
             cd /var/www/midlight-site
             echo "Pulling latest..."
             git pull
             echo "Installing dependencies..."
-            npm ci --production
+            npm ci --omit=dev
             echo "Restarting backend..."
             pm2 restart midlight-backend
             pm2 status midlight-backend
