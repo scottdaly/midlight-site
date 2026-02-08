@@ -434,6 +434,7 @@ export default {
   uploadDocument,
   downloadDocument,
   deleteDocument,
+  deleteDocumentObjects: deleteDocument, // Alias for cleanup service
   documentExists,
   preserveVersion,
   getConflictVersion,

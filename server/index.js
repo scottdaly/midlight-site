@@ -31,6 +31,7 @@ import {
 } from './middleware/errorHandler.js';
 import { logger, requestLogger } from './utils/logger.js';
 import { CONFIG } from './config/index.js';
+import { startSyncCleanup } from './services/syncCleanupService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -313,6 +314,9 @@ setInterval(() => {
 
 app.listen(PORT, () => {
   const providers = getProviderStatus();
+
+  // Start sync cleanup service (expired documents, resolved conflicts, old logs)
+  startSyncCleanup();
 
   logger.info({
     port: PORT,

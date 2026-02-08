@@ -64,22 +64,38 @@ const syncRateLimiter = rateLimit({
 
 router.use(syncRateLimiter);
 
+// Document count limits by tier (from config)
+const DOCUMENT_LIMITS = {
+  free: CONFIG.syncStorage.free.maxDocuments,
+  premium: CONFIG.syncStorage.premium.maxDocuments,
+  pro: CONFIG.syncStorage.pro.maxDocuments,
+};
+
 /**
- * Check if user has exceeded storage limit
+ * Check if user has exceeded storage limit (bytes + document count)
  */
-function checkStorageLimit(userId, tier, additionalBytes = 0) {
+function checkStorageLimit(userId, tier, additionalBytes = 0, isNewDocument = false) {
   const usage = db
-    .prepare('SELECT total_size_bytes FROM sync_usage WHERE user_id = ?')
+    .prepare('SELECT total_size_bytes, document_count FROM sync_usage WHERE user_id = ?')
     .get(userId);
 
   const currentUsage = usage?.total_size_bytes || 0;
-  const limit = STORAGE_LIMITS[tier] || STORAGE_LIMITS.free;
+  const currentCount = usage?.document_count || 0;
+  const byteLimit = STORAGE_LIMITS[tier] || STORAGE_LIMITS.free;
+  const docLimit = DOCUMENT_LIMITS[tier] || DOCUMENT_LIMITS.free;
+
+  const bytesExceeded = currentUsage + additionalBytes > byteLimit;
+  const docsExceeded = isNewDocument && currentCount >= docLimit;
 
   return {
-    allowed: currentUsage + additionalBytes <= limit,
+    allowed: !bytesExceeded && !docsExceeded,
     currentUsage,
-    limit,
-    remaining: limit - currentUsage,
+    limit: byteLimit,
+    remaining: byteLimit - currentUsage,
+    currentCount,
+    docLimit,
+    bytesExceeded,
+    docsExceeded,
   };
 }
 
@@ -114,15 +130,44 @@ router.get('/status', async (req, res) => {
     const userId = req.user.id;
     const tier = req.subscription?.tier || 'free';
 
-    // Get all documents for this user
-    const documents = db
-      .prepare(`
-        SELECT id, path, content_hash, sidecar_hash, version, size_bytes, updated_at, deleted_at
-        FROM sync_documents
-        WHERE user_id = ?
-        ORDER BY updated_at DESC
-      `)
-      .all(userId);
+    // Optional pagination params
+    const pageLimit = req.query.limit ? parseInt(req.query.limit, 10) : null;
+    const cursor = req.query.cursor || null;
+
+    // Get documents (with optional pagination)
+    let documents;
+    if (pageLimit && pageLimit > 0) {
+      if (cursor) {
+        documents = db
+          .prepare(`
+            SELECT id, path, content_hash, sidecar_hash, version, size_bytes, updated_at, deleted_at
+            FROM sync_documents
+            WHERE user_id = ? AND updated_at < ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+          `)
+          .all(userId, cursor, pageLimit);
+      } else {
+        documents = db
+          .prepare(`
+            SELECT id, path, content_hash, sidecar_hash, version, size_bytes, updated_at, deleted_at
+            FROM sync_documents
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+          `)
+          .all(userId, pageLimit);
+      }
+    } else {
+      documents = db
+        .prepare(`
+          SELECT id, path, content_hash, sidecar_hash, version, size_bytes, updated_at, deleted_at
+          FROM sync_documents
+          WHERE user_id = ?
+          ORDER BY updated_at DESC
+        `)
+        .all(userId);
+    }
 
     // Get usage stats
     const usage = db
@@ -139,9 +184,15 @@ router.get('/status', async (req, res) => {
       `)
       .all(userId);
 
-    const limit = STORAGE_LIMITS[tier] || STORAGE_LIMITS.free;
+    const storageLimit = STORAGE_LIMITS[tier] || STORAGE_LIMITS.free;
 
-    res.json({
+    // Compute nextCursor for pagination
+    let nextCursor = null;
+    if (pageLimit && pageLimit > 0 && documents.length === pageLimit) {
+      nextCursor = documents[documents.length - 1].updated_at;
+    }
+
+    const response = {
       documents: documents.map((doc) => ({
         id: doc.id,
         path: doc.path,
@@ -155,8 +206,8 @@ router.get('/status', async (req, res) => {
       usage: {
         documentCount: usage?.document_count || 0,
         totalSizeBytes: usage?.total_size_bytes || 0,
-        limitBytes: limit,
-        percentUsed: usage ? (usage.total_size_bytes / limit) * 100 : 0,
+        limitBytes: storageLimit,
+        percentUsed: usage ? (usage.total_size_bytes / storageLimit) * 100 : 0,
         lastSyncAt: usage?.last_sync_at,
       },
       conflicts: conflicts.map((c) => ({
@@ -168,7 +219,13 @@ router.get('/status', async (req, res) => {
         createdAt: c.created_at,
       })),
       storageAvailable: storage.isStorageAvailable(),
-    });
+    };
+
+    if (nextCursor) {
+      response.nextCursor = nextCursor;
+    }
+
+    res.json(response);
   } catch (error) {
     logger.error({ error: error?.message || error, userId: req.user.id }, 'Sync status error');
     res.status(500).json({ error: 'Failed to get sync status' });
@@ -227,15 +284,26 @@ router.post(
       const sidecarSize = Buffer.byteLength(JSON.stringify(sidecar), 'utf-8');
       const totalSize = contentSize + sidecarSize;
 
-      // Check storage limit
-      const storageCheck = checkStorageLimit(userId, tier, totalSize);
+      // Check for existing document (used for isNewDocument check)
+      const existingForLimitCheck = db
+        .prepare('SELECT id FROM sync_documents WHERE user_id = ? AND path = ? AND deleted_at IS NULL')
+        .get(userId, path);
+
+      // Check storage limit (bytes + document count)
+      const storageCheck = checkStorageLimit(userId, tier, totalSize, !existingForLimitCheck);
       if (!storageCheck.allowed) {
+        const limitType = storageCheck.docsExceeded ? 'document_count' : 'storage_bytes';
         return res.status(413).json({
-          error: 'Storage limit exceeded',
+          error: storageCheck.docsExceeded
+            ? `Document limit exceeded (${storageCheck.currentCount}/${storageCheck.docLimit})`
+            : 'Storage limit exceeded',
+          limitType,
           usage: {
             current: storageCheck.currentUsage,
             limit: storageCheck.limit,
             required: totalSize,
+            currentCount: storageCheck.currentCount,
+            docLimit: storageCheck.docLimit,
           },
         });
       }
@@ -245,16 +313,80 @@ router.post(
         .prepare('SELECT * FROM sync_documents WHERE user_id = ? AND path = ?')
         .get(userId, path);
 
-      // Check for conflicts (if baseVersion provided and doesn't match)
-      if (existing && baseVersion !== undefined && existing.version !== baseVersion) {
-        // Conflict detected - preserve both versions
+      // Generate or use existing document ID
+      const documentId = existing?.id || crypto.randomUUID();
+
+      // Upload to R2 first (optimistic, outside transaction)
+      const uploadResult = await storage.uploadDocument(userId, documentId, content, sidecar);
+
+      // Wrap version check + DB upsert in transaction for atomicity
+      const transact = db.transaction(() => {
+        // Re-read document inside transaction to get latest version
+        const current = db
+          .prepare('SELECT * FROM sync_documents WHERE user_id = ? AND path = ?')
+          .get(userId, path);
+
+        // Check for conflicts (if baseVersion provided and doesn't match)
+        if (current && baseVersion !== undefined && current.version !== baseVersion) {
+          return { conflict: true, current };
+        }
+
+        // Calculate size difference for usage tracking
+        const sizeDelta = totalSize - (current?.size_bytes || 0);
+
+        // Upsert document record
+        if (current) {
+          db.prepare(`
+            UPDATE sync_documents SET
+              content_hash = ?, sidecar_hash = ?, r2_content_key = ?, r2_sidecar_key = ?,
+              version = version + 1, size_bytes = ?, updated_at = CURRENT_TIMESTAMP, deleted_at = NULL
+            WHERE id = ?
+          `).run(
+            uploadResult.contentHash,
+            uploadResult.sidecarHash,
+            uploadResult.contentKey,
+            uploadResult.sidecarKey,
+            totalSize,
+            documentId
+          );
+        } else {
+          db.prepare(`
+            INSERT INTO sync_documents (id, user_id, path, content_hash, sidecar_hash,
+              r2_content_key, r2_sidecar_key, version, size_bytes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+          `).run(
+            documentId,
+            userId,
+            path,
+            uploadResult.contentHash,
+            uploadResult.sidecarHash,
+            uploadResult.contentKey,
+            uploadResult.sidecarKey,
+            totalSize
+          );
+        }
+
+        // Update usage stats
+        updateSyncUsage(userId, sizeDelta);
+
+        // Log operation
+        logSyncOperation(userId, documentId, 'upload', path, totalSize, true);
+
+        return { conflict: false };
+      });
+
+      const txResult = transact();
+
+      // Handle conflict outside transaction (needs async R2 operations)
+      if (txResult.conflict) {
+        const current = txResult.current;
         const conflictId = crypto.randomUUID();
-        const existingDoc = await storage.downloadDocument(userId, existing.id);
+        const existingDoc = await storage.downloadDocument(userId, current.id);
 
         // Store local version in conflict storage
         const localKeys = await storage.preserveVersion(
           userId,
-          existing.id,
+          current.id,
           baseVersion,
           content,
           sidecar
@@ -267,77 +399,30 @@ router.post(
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           conflictId,
-          existing.id,
+          current.id,
           userId,
           baseVersion,
-          existing.version,
+          current.version,
           storage.hashContent(content),
-          existing.content_hash,
+          current.content_hash,
           localKeys.contentKey,
-          existing.r2_content_key
+          current.r2_content_key
         );
 
-        logSyncOperation(userId, existing.id, 'conflict', path, totalSize, true);
+        logSyncOperation(userId, current.id, 'conflict', path, totalSize, true);
 
         return res.status(409).json({
           error: 'Conflict detected',
           conflict: {
             id: conflictId,
-            documentId: existing.id,
+            documentId: current.id,
             localVersion: baseVersion,
-            remoteVersion: existing.version,
+            remoteVersion: current.version,
             remoteContent: existingDoc?.content,
             remoteSidecar: existingDoc?.sidecar,
           },
         });
       }
-
-      // Generate or use existing document ID
-      const documentId = existing?.id || crypto.randomUUID();
-
-      // Upload to R2
-      const uploadResult = await storage.uploadDocument(userId, documentId, content, sidecar);
-
-      // Calculate size difference for usage tracking
-      const sizeDelta = totalSize - (existing?.size_bytes || 0);
-
-      // Upsert document record
-      if (existing) {
-        db.prepare(`
-          UPDATE sync_documents SET
-            content_hash = ?, sidecar_hash = ?, r2_content_key = ?, r2_sidecar_key = ?,
-            version = version + 1, size_bytes = ?, updated_at = CURRENT_TIMESTAMP, deleted_at = NULL
-          WHERE id = ?
-        `).run(
-          uploadResult.contentHash,
-          uploadResult.sidecarHash,
-          uploadResult.contentKey,
-          uploadResult.sidecarKey,
-          totalSize,
-          documentId
-        );
-      } else {
-        db.prepare(`
-          INSERT INTO sync_documents (id, user_id, path, content_hash, sidecar_hash,
-            r2_content_key, r2_sidecar_key, version, size_bytes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-        `).run(
-          documentId,
-          userId,
-          path,
-          uploadResult.contentHash,
-          uploadResult.sidecarHash,
-          uploadResult.contentKey,
-          uploadResult.sidecarKey,
-          totalSize
-        );
-      }
-
-      // Update usage stats
-      updateSyncUsage(userId, sizeDelta);
-
-      // Log operation
-      logSyncOperation(userId, documentId, 'upload', path, totalSize, true);
 
       // Get updated document
       const updated = db
@@ -412,6 +497,98 @@ router.get('/documents/:id', [param('id').isUUID()], async (req, res) => {
     res.status(500).json({ error: 'Failed to download document' });
   }
 });
+
+// PATCH /api/sync/documents/:id - Atomic rename (path update only, no R2 operations)
+router.patch(
+  '/documents/:id',
+  [
+    param('id').isUUID(),
+    body('path').isString().trim().notEmpty().withMessage('New path is required'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const userId = req.user.id;
+      const { id } = req.params;
+      const { path: rawPath } = req.body;
+
+      // Security: Validate and sanitize new path
+      const pathValidation = validateSyncPath(rawPath);
+      if (!pathValidation.valid) {
+        logger.warn({ userId, path: rawPath, error: pathValidation.error }, 'Invalid rename path');
+        return res.status(400).json({ error: pathValidation.error });
+      }
+      const newPath = pathValidation.sanitized;
+
+      // Atomic rename in transaction
+      const transact = db.transaction(() => {
+        // Get existing document
+        const doc = db
+          .prepare('SELECT * FROM sync_documents WHERE id = ? AND user_id = ?')
+          .get(id, userId);
+
+        if (!doc) {
+          return { error: 'not_found' };
+        }
+
+        // Check new path uniqueness
+        const existing = db
+          .prepare('SELECT id FROM sync_documents WHERE user_id = ? AND path = ? AND deleted_at IS NULL AND id != ?')
+          .get(userId, newPath, id);
+
+        if (existing) {
+          return { error: 'path_exists' };
+        }
+
+        const oldPath = doc.path;
+
+        // Update path
+        db.prepare(`
+          UPDATE sync_documents SET path = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND user_id = ?
+        `).run(newPath, id, userId);
+
+        logSyncOperation(userId, id, 'rename', `${oldPath} -> ${newPath}`, 0, true);
+
+        return { success: true, oldPath, newPath };
+      });
+
+      const result = transact();
+
+      if (result.error === 'not_found') {
+        return res.status(404).json({ error: 'Document not found' });
+      }
+      if (result.error === 'path_exists') {
+        return res.status(409).json({ error: 'A document already exists at the target path' });
+      }
+
+      // Get updated document
+      const updated = db
+        .prepare('SELECT * FROM sync_documents WHERE id = ?')
+        .get(id);
+
+      res.json({
+        success: true,
+        document: {
+          id: updated.id,
+          path: updated.path,
+          contentHash: updated.content_hash,
+          sidecarHash: updated.sidecar_hash,
+          version: updated.version,
+          sizeBytes: updated.size_bytes,
+          updatedAt: updated.updated_at,
+        },
+      });
+    } catch (error) {
+      logger.error({ error: error?.message || error, userId: req.user.id }, 'Sync rename error');
+      res.status(500).json({ error: 'Failed to rename document' });
+    }
+  }
+);
 
 // DELETE /api/sync/documents/:id - Soft delete a document
 router.delete('/documents/:id', [param('id').isUUID()], async (req, res) => {
