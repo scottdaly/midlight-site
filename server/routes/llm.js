@@ -60,7 +60,8 @@ router.post('/chat', chatValidation, async (req, res) => {
       temperature = 0.7,
       maxTokens = 4096,
       stream = false,
-      requestType = 'chat'
+      requestType = 'chat',
+      webSearchEnabled = false
     } = req.body;
 
     // Check if model is allowed for user's tier
@@ -91,7 +92,9 @@ router.post('/chat', chatValidation, async (req, res) => {
           temperature,
           maxTokens,
           stream: true,
-          requestType
+          requestType,
+          webSearchEnabled,
+          userTier
         });
 
         for await (const chunk of streamResponse) {
@@ -125,7 +128,9 @@ router.post('/chat', chatValidation, async (req, res) => {
         temperature,
         maxTokens,
         stream: false,
-        requestType
+        requestType,
+        webSearchEnabled,
+        userTier
       });
 
       res.json(response);

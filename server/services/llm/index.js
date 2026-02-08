@@ -52,6 +52,57 @@ function capMaxTokens(maxTokens, tier) {
   return tierMax ? Math.min(maxTokens, tierMax) : maxTokens;
 }
 
+/**
+ * Runs the Tavily search pipeline if enabled and configured.
+ * Shared between chat() and chatWithTools().
+ * Returns { messagesWithSearch, searchResult } where messagesWithSearch
+ * has search context injected if search was executed.
+ */
+async function runSearchIfEnabled({ messages, webSearchEnabled, userTier, userId }) {
+  let searchResult = null;
+  let messagesWithSearch = messages;
+
+  if (!webSearchEnabled || !searchService.isConfigured()) {
+    if (webSearchEnabled && !searchService.isConfigured()) {
+      console.warn('[LLM] Web search requested but TAVILY_API_KEY not configured');
+    }
+    return { messagesWithSearch, searchResult };
+  }
+
+  try {
+    const recentContext = messages
+      .slice(-6)
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => `${m.role}: ${(m.content || '').substring(0, 200)}`)
+      .join('\n');
+
+    const lastUserMessage = messages
+      .filter(m => m.role === 'user')
+      .pop()?.content || '';
+
+    searchResult = await searchService.executeSearchPipeline({
+      userId,
+      message: lastUserMessage,
+      conversationContext: recentContext,
+      limits: CONFIG.search.limits[userTier] || (console.warn(`[LLM] Unknown search tier '${userTier}', falling back to free limits`), CONFIG.search.limits.free)
+    });
+
+    console.log(`[LLM] Search result: executed=${searchResult.searchExecuted}, results=${searchResult.results?.length || 0}, skipReason=${searchResult.skipReason}`);
+
+    if (searchResult.searchExecuted && searchResult.formattedContext) {
+      messagesWithSearch = searchService.injectSearchContext(
+        messages,
+        searchResult.formattedContext
+      );
+      console.log(`[LLM] Search context injected, context tokens: ${searchResult.contextTokens}`);
+    }
+  } catch (error) {
+    console.warn('[LLM] Search pipeline failed, continuing without:', error.message);
+  }
+
+  return { messagesWithSearch, searchResult };
+}
+
 export async function chat({
   userId,
   provider,
@@ -60,7 +111,9 @@ export async function chat({
   temperature = 0.7,
   maxTokens = 4096,
   stream = false,
-  requestType = 'chat'
+  requestType = 'chat',
+  webSearchEnabled = false,
+  userTier = 'free'
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -81,13 +134,18 @@ export async function chat({
     throw new Error(`Provider ${provider} is not configured`);
   }
 
+  // Run search pipeline if enabled
+  const { messagesWithSearch } = await runSearchIfEnabled({
+    messages, webSearchEnabled, userTier, userId
+  });
+
   // Make request
   if (stream) {
     return streamWithTracking({
       userId,
       provider,
       model,
-      messages,
+      messages: messagesWithSearch,
       temperature,
       maxTokens,
       requestType,
@@ -97,7 +155,7 @@ export async function chat({
 
   const response = await providerService.chat({
     model,
-    messages,
+    messages: messagesWithSearch,
     temperature,
     maxTokens,
     stream: false
@@ -177,48 +235,9 @@ export async function chatWithTools({
   }
 
   // Unified search pipeline (replaces native provider search)
-  let searchResult = null;
-  let messagesWithSearch = messages;
-
-  console.log(`[LLM] webSearchEnabled: ${webSearchEnabled}, searchConfigured: ${searchService.isConfigured()}`);
-
-  if (webSearchEnabled && searchService.isConfigured()) {
-    try {
-      // Get conversation context for classifier
-      const recentContext = messages
-        .slice(-6)
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => `${m.role}: ${(m.content || '').substring(0, 200)}`)
-        .join('\n');
-
-      // Get the last user message for search
-      const lastUserMessage = messages
-        .filter(m => m.role === 'user')
-        .pop()?.content || '';
-
-      searchResult = await searchService.executeSearchPipeline({
-        userId,
-        message: lastUserMessage,
-        conversationContext: recentContext,
-        limits: CONFIG.search.limits[userTier] || (console.warn(`[LLM] Unknown search tier '${userTier}', falling back to free limits`), CONFIG.search.limits.free)
-      });
-
-      console.log(`[LLM] Search result: executed=${searchResult.searchExecuted}, results=${searchResult.results?.length || 0}, skipReason=${searchResult.skipReason}`);
-
-      if (searchResult.searchExecuted && searchResult.formattedContext) {
-        // Inject search context into messages
-        messagesWithSearch = searchService.injectSearchContext(
-          messages,
-          searchResult.formattedContext
-        );
-        console.log(`[LLM] Search context injected, context tokens: ${searchResult.contextTokens}`);
-      }
-    } catch (error) {
-      console.warn('[LLM] Search pipeline failed, continuing without:', error.message);
-    }
-  } else if (webSearchEnabled && !searchService.isConfigured()) {
-    console.warn('[LLM] Web search requested but TAVILY_API_KEY not configured');
-  }
+  const { messagesWithSearch, searchResult } = await runSearchIfEnabled({
+    messages, webSearchEnabled, userTier, userId
+  });
 
   // Call provider WITHOUT native search (now using Tavily)
   const response = await providerService.chatWithTools({
@@ -291,6 +310,20 @@ export async function chatWithToolsStream({
     throw new Error(`Provider ${provider} is not configured`);
   }
 
+  // Run search pipeline
+  const { messagesWithSearch, searchResult } = await runSearchIfEnabled({
+    messages, webSearchEnabled, userTier, userId
+  });
+
+  let sources = [];
+  if (searchResult?.searchExecuted && searchResult.results?.length > 0) {
+    sources = searchResult.results.map(r => ({
+      url: r.url,
+      title: r.title || '',
+      snippet: (r.content || '').substring(0, 200)
+    }));
+  }
+
   if (!providerService.chatWithToolsStream) {
     // Fall back to non-streaming for providers without stream support
     const response = await providerService.chatWithTools({ model, messages: messagesWithSearch, tools, temperature, maxTokens, webSearchEnabled: false });
@@ -307,49 +340,6 @@ export async function chatWithToolsStream({
     }
     await trackUsage(userId, provider, model, response.usage, requestType);
     return { stream: nonStreamingFallback(), sources };
-  }
-
-  // Run search pipeline (same as non-streaming)
-  let searchResult = null;
-  let messagesWithSearch = messages;
-  let sources = [];
-
-  if (webSearchEnabled && searchService.isConfigured()) {
-    try {
-      const recentContext = messages
-        .slice(-6)
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => `${m.role}: ${(m.content || '').substring(0, 200)}`)
-        .join('\n');
-
-      const lastUserMessage = messages
-        .filter(m => m.role === 'user')
-        .pop()?.content || '';
-
-      searchResult = await searchService.executeSearchPipeline({
-        userId,
-        message: lastUserMessage,
-        conversationContext: recentContext,
-        limits: CONFIG.search.limits[userTier] || (console.warn(`[LLM] Unknown search tier '${userTier}', falling back to free limits`), CONFIG.search.limits.free)
-      });
-
-      if (searchResult.searchExecuted && searchResult.formattedContext) {
-        messagesWithSearch = searchService.injectSearchContext(
-          messages,
-          searchResult.formattedContext
-        );
-      }
-
-      if (searchResult.searchExecuted && searchResult.results?.length > 0) {
-        sources = searchResult.results.map(r => ({
-          url: r.url,
-          title: r.title || '',
-          snippet: (r.content || '').substring(0, 200)
-        }));
-      }
-    } catch (error) {
-      console.warn('[LLM] Search pipeline failed for streaming, continuing without:', error.message);
-    }
   }
 
   // Create the streaming generator with usage tracking wrapper
