@@ -217,10 +217,10 @@ export function processErrorReport(reportId, errorData) {
 export function getIssueStats() {
   try {
     const stats = {
-      total: db.prepare('SELECT COUNT(*) as count FROM error_issues').get().count,
-      open: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'open'").get().count,
-      resolved: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'resolved'").get().count,
-      ignored: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'ignored'").get().count,
+      totalIssues: db.prepare('SELECT COUNT(*) as count FROM error_issues').get().count,
+      openIssues: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'open'").get().count,
+      resolvedIssues: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'resolved'").get().count,
+      ignoredIssues: db.prepare("SELECT COUNT(*) as count FROM error_issues WHERE status = 'ignored'").get().count,
 
       // Last 24 hours
       last24h: db.prepare(`
