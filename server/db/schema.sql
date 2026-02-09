@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   completion_tokens INTEGER DEFAULT 0,
   total_tokens INTEGER DEFAULT 0,
   request_type TEXT,                     -- 'chat', 'inline_edit', 'agent'
+  effort_lane TEXT,                      -- 'quick', 'think', 'write', 'manual', 'inline_edit', 'compaction', 'classification'
   search_count INTEGER DEFAULT 0,        -- Number of web searches executed
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

@@ -58,7 +58,7 @@ export async function checkQuota(userId) {
   };
 }
 
-export async function trackUsage(userId, provider, model, usage, requestType = 'chat') {
+export async function trackUsage(userId, provider, model, usage, requestType = 'chat', effortLane = null) {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const totalTokens = usage.totalTokens || 0;
   const isBillable = !EXEMPT_REQUEST_TYPES.has(requestType);
@@ -66,8 +66,8 @@ export async function trackUsage(userId, provider, model, usage, requestType = '
 
   // Insert detailed usage record
   const insertStmt = db.prepare(`
-    INSERT INTO llm_usage (user_id, provider, model, prompt_tokens, completion_tokens, total_tokens, request_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO llm_usage (user_id, provider, model, prompt_tokens, completion_tokens, total_tokens, request_type, effort_lane)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertStmt.run(
     userId,
@@ -76,7 +76,8 @@ export async function trackUsage(userId, provider, model, usage, requestType = '
     usage.promptTokens || 0,
     usage.completionTokens || 0,
     totalTokens,
-    requestType
+    requestType,
+    effortLane
   );
 
   // Update monthly rollup (upsert)

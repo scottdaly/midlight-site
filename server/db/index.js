@@ -258,6 +258,18 @@ function runMigrations() {
         console.log('Migration: Created auth_events table');
       }
     },
+    // Add effort_lane to llm_usage table
+    {
+      name: 'add_effort_lane_to_llm_usage',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage)").all();
+        return cols.some(c => c.name === 'effort_lane');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage ADD COLUMN effort_lane TEXT");
+        console.log('Migration: Added effort_lane to llm_usage table');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',

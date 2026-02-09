@@ -102,6 +102,18 @@ router.get('/overview', (req, res) => {
 
     const totalCostCents = byModel.reduce((sum, r) => sum + r.costCents, 0);
 
+    // By effort lane
+    const byLane = db.prepare(`
+      SELECT
+        COALESCE(effort_lane, 'unknown') as lane,
+        COUNT(*) as requests,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE created_at >= date('now', 'start of month')
+      GROUP BY COALESCE(effort_lane, 'unknown')
+      ORDER BY requests DESC
+    `).all();
+
     res.json({
       month: currentMonth,
       totalRequests: totals.totalRequests,
@@ -110,7 +122,8 @@ router.get('/overview', (req, res) => {
       totalCostDollars: (totalCostCents / 100).toFixed(2),
       byProvider,
       byModel,
-      byTier
+      byTier,
+      byLane
     });
   } catch (err) {
     logger.error({ error: err?.message || err }, 'Error fetching usage overview');

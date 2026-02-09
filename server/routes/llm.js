@@ -64,7 +64,8 @@ router.post('/chat', chatValidation, async (req, res) => {
       maxTokens = 4096,
       stream = false,
       requestType = 'chat',
-      webSearchEnabled = false
+      webSearchEnabled = false,
+      effortLane = null
     } = req.body;
 
     // Check if model is allowed for user's tier
@@ -97,7 +98,8 @@ router.post('/chat', chatValidation, async (req, res) => {
           stream: true,
           requestType,
           webSearchEnabled,
-          userTier
+          userTier,
+          effortLane
         });
 
         for await (const chunk of streamResponse) {
@@ -135,7 +137,8 @@ router.post('/chat', chatValidation, async (req, res) => {
         stream: false,
         requestType,
         webSearchEnabled,
-        userTier
+        userTier,
+        effortLane
       });
 
       res.json(response);
@@ -177,7 +180,8 @@ router.post('/chat-with-tools', [
       temperature = 0.7,
       maxTokens = 4096,
       stream = false,
-      webSearchEnabled = false
+      webSearchEnabled = false,
+      effortLane = null
     } = req.body;
 
     // Check if model is allowed
@@ -211,7 +215,8 @@ router.post('/chat-with-tools', [
           temperature,
           maxTokens,
           webSearchEnabled,
-          userTier
+          userTier,
+          effortLane
         });
         console.log(`[LLM Route] Stream setup complete: ${Date.now() - reqStart}ms`);
 
@@ -261,7 +266,8 @@ router.post('/chat-with-tools', [
         temperature,
         maxTokens,
         webSearchEnabled,
-        userTier
+        userTier,
+        effortLane
       });
 
       res.json(response);
