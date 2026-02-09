@@ -41,10 +41,10 @@ const MODEL_ID_MAP = {
   'gemini-3-flash-thinking-high': 'gemini-3-flash-preview',
 };
 
-// Alias → thinkingConfig params
+// Alias → thinkingConfig params (includeThoughts enables streaming thought summaries)
 const THINKING_CONFIG = {
-  'gemini-3-flash-thinking-low': { thinkingConfig: { thinkingBudget: 2048 } },
-  'gemini-3-flash-thinking-high': { thinkingConfig: { thinkingBudget: 24576 } },
+  'gemini-3-flash-thinking-low': { thinkingConfig: { thinkingBudget: 2048, includeThoughts: true } },
+  'gemini-3-flash-thinking-high': { thinkingConfig: { thinkingBudget: 24576, includeThoughts: true } },
 };
 
 // Convert OpenAI-style messages to Gemini format
@@ -189,14 +189,25 @@ async function* streamChat(generativeModel, contents) {
   let finishReason = 'stop';
 
   for await (const chunk of result.stream) {
-    const text = chunk.text();
-    if (text) {
-      totalContent += text;
-      yield {
-        type: 'chunk',
-        content: text,
-        finishReason: null
-      };
+    const parts = chunk.candidates?.[0]?.content?.parts;
+    if (parts) {
+      for (const part of parts) {
+        if (part.thought && part.text) {
+          // Thinking/reasoning content
+          yield { type: 'thinking', thinking: part.text, finishReason: null };
+        } else if (part.text) {
+          // Regular content (avoid chunk.text() which includes thought parts)
+          totalContent += part.text;
+          yield { type: 'chunk', content: part.text, finishReason: null };
+        }
+      }
+    } else {
+      // Fallback for chunks without parts structure
+      const text = chunk.text();
+      if (text) {
+        totalContent += text;
+        yield { type: 'chunk', content: text, finishReason: null };
+      }
     }
 
     // Check for finish reason

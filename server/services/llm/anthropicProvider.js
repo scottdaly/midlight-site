@@ -170,15 +170,14 @@ async function* streamChat(params) {
   let completionTokens = 0;
 
   for await (const event of stream) {
-    if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-      const delta = event.delta.text;
-      totalContent += delta;
-
-      yield {
-        type: 'chunk',
-        content: delta,
-        finishReason: null
-      };
+    if (event.type === 'content_block_delta') {
+      if (event.delta.type === 'text_delta') {
+        const delta = event.delta.text;
+        totalContent += delta;
+        yield { type: 'chunk', content: delta, finishReason: null };
+      } else if (event.delta.type === 'thinking_delta') {
+        yield { type: 'thinking', thinking: event.delta.thinking };
+      }
     }
 
     if (event.type === 'message_delta') {
@@ -334,6 +333,8 @@ export async function* chatWithToolsStream({
     if (event.type === 'content_block_delta') {
       if (event.delta.type === 'text_delta') {
         yield { type: 'content', content: event.delta.text };
+      } else if (event.delta.type === 'thinking_delta') {
+        yield { type: 'thinking', thinking: event.delta.thinking };
       } else if (event.delta.type === 'input_json_delta' && currentToolCall) {
         currentToolInput += event.delta.partial_json;
       }

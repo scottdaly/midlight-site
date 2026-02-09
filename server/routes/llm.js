@@ -103,6 +103,8 @@ router.post('/chat', chatValidation, async (req, res) => {
         for await (const chunk of streamResponse) {
           if (chunk.type === 'chunk') {
             res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+          } else if (chunk.type === 'thinking') {
+            res.write(`data: ${JSON.stringify({ type: 'thinking', thinking: chunk.thinking })}\n\n`);
           } else if (chunk.type === 'done') {
             res.write(`data: ${JSON.stringify({
               done: true,
@@ -213,6 +215,8 @@ router.post('/chat-with-tools', [
         for await (const chunk of streamResult.stream) {
           if (chunk.type === 'content') {
             res.write(`data: ${JSON.stringify({ type: 'content', content: chunk.content })}\n\n`);
+          } else if (chunk.type === 'thinking') {
+            res.write(`data: ${JSON.stringify({ type: 'thinking', thinking: chunk.thinking })}\n\n`);
           } else if (chunk.type === 'tool_call') {
             res.write(`data: ${JSON.stringify({ type: 'tool_call', toolCall: chunk.toolCall })}\n\n`);
           } else if (chunk.type === 'done') {

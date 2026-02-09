@@ -201,8 +201,19 @@ async function* streamChat(params, originalModel) {
   let completionTokens = 0;
 
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content || '';
-    totalContent += delta;
+    const delta = chunk.choices[0]?.delta;
+
+    // Thinking/reasoning content (OpenAI-compatible thinking models)
+    const thinking = delta?.reasoning_content || delta?.reasoning || '';
+    if (thinking) {
+      yield { type: 'thinking', thinking, finishReason: null };
+    }
+
+    const content = delta?.content || '';
+    if (content) {
+      totalContent += content;
+      yield { type: 'chunk', content, finishReason: chunk.choices[0]?.finish_reason || null };
+    }
 
     // Usage is only available in the final chunk for some models
     if (chunk.usage) {
@@ -210,11 +221,10 @@ async function* streamChat(params, originalModel) {
       completionTokens = chunk.usage.completion_tokens;
     }
 
-    yield {
-      type: 'chunk',
-      content: delta,
-      finishReason: chunk.choices[0]?.finish_reason || null
-    };
+    // Yield finish reason if no content (e.g. final chunk)
+    if (!content && !thinking && chunk.choices[0]?.finish_reason) {
+      yield { type: 'chunk', content: '', finishReason: chunk.choices[0].finish_reason };
+    }
   }
 
   // Final message with usage stats
