@@ -52,17 +52,17 @@ router.get('/me', (req, res) => {
 // This is the endpoint used by the web app for auth initialization
 router.get('/profile', (req, res) => {
   try {
-    // Get quota info
+    // Get quota info (token-based)
     const currentMonth = new Date().toISOString().slice(0, 7);
     const rollupStmt = db.prepare(`
-      SELECT request_count, total_tokens
+      SELECT billable_tokens
       FROM llm_usage_monthly
       WHERE user_id = ? AND month = ?
     `);
     const rollup = rollupStmt.get(req.user.id, currentMonth);
 
     const limit = getQuotaLimit(req.subscription.tier);
-    const used = rollup?.request_count || 0;
+    const used = rollup?.billable_tokens || 0;
 
     res.json({
       user: {
@@ -216,9 +216,9 @@ router.get('/usage', (req, res) => {
   try {
     const currentMonth = new Date().toISOString().slice(0, 7); // '2025-12'
 
-    // Get monthly rollup
+    // Get monthly rollup (token-based)
     const rollupStmt = db.prepare(`
-      SELECT request_count, total_tokens
+      SELECT request_count, total_tokens, billable_tokens
       FROM llm_usage_monthly
       WHERE user_id = ? AND month = ?
     `);
@@ -239,7 +239,7 @@ router.get('/usage', (req, res) => {
     `);
     const breakdown = breakdownStmt.all(req.user.id);
 
-    const used = rollup?.request_count || 0;
+    const used = rollup?.billable_tokens || 0;
     const remaining = limit === Infinity ? null : Math.max(0, limit - used);
 
     res.json({

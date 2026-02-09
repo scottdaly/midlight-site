@@ -38,8 +38,11 @@ const chatValidation = [
   body('model').notEmpty().withMessage('Model required'),
   body('messages').isArray({ min: 1 }).withMessage('Messages array required'),
   body('messages.*.role').isIn(['system', 'user', 'assistant', 'tool']).withMessage('Invalid message role'),
-  // Content can be empty for assistant messages with tool calls
-  body('messages.*.content').exists().withMessage('Message content required'),
+  // Content can be a string or array (for multimodal/vision messages)
+  body('messages.*.content').custom((value) => {
+    if (typeof value === 'string' || Array.isArray(value) || value === null) return true;
+    throw new Error('Content must be string, array, or null');
+  }),
   body('temperature').optional().isFloat({ min: 0, max: 2 }),
   body('maxTokens').optional().isInt({ min: 1, max: 32000 }),
   body('stream').optional().isBoolean()

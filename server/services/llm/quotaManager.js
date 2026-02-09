@@ -9,6 +9,9 @@ const RATE_LIMITS = {
   pro: 60
 };
 
+// Request types exempt from token billing (system overhead)
+const EXEMPT_REQUEST_TYPES = new Set(['classification', 'compaction']);
+
 /**
  * Get the ISO timestamp for when the current quota period resets (1st of next month UTC)
  */
@@ -36,14 +39,14 @@ export async function checkQuota(userId) {
 
   const currentMonth = new Date().toISOString().slice(0, 7);
 
-  // Get current usage from monthly rollup
+  // Get current billable token usage from monthly rollup
   const stmt = db.prepare(`
-    SELECT request_count
+    SELECT billable_tokens
     FROM llm_usage_monthly
     WHERE user_id = ? AND month = ?
   `);
   const usage = stmt.get(userId, currentMonth);
-  const used = usage?.request_count || 0;
+  const used = usage?.billable_tokens || 0;
 
   return {
     allowed: used < limit,
@@ -57,6 +60,9 @@ export async function checkQuota(userId) {
 
 export async function trackUsage(userId, provider, model, usage, requestType = 'chat') {
   const currentMonth = new Date().toISOString().slice(0, 7);
+  const totalTokens = usage.totalTokens || 0;
+  const isBillable = !EXEMPT_REQUEST_TYPES.has(requestType);
+  const billableTokens = isBillable ? totalTokens : 0;
 
   // Insert detailed usage record
   const insertStmt = db.prepare(`
@@ -69,20 +75,21 @@ export async function trackUsage(userId, provider, model, usage, requestType = '
     model,
     usage.promptTokens || 0,
     usage.completionTokens || 0,
-    usage.totalTokens || 0,
+    totalTokens,
     requestType
   );
 
   // Update monthly rollup (upsert)
   const upsertStmt = db.prepare(`
-    INSERT INTO llm_usage_monthly (user_id, month, request_count, total_tokens, updated_at)
-    VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
+    INSERT INTO llm_usage_monthly (user_id, month, request_count, total_tokens, billable_tokens, updated_at)
+    VALUES (?, ?, 1, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id, month) DO UPDATE SET
       request_count = request_count + 1,
       total_tokens = total_tokens + excluded.total_tokens,
+      billable_tokens = billable_tokens + excluded.billable_tokens,
       updated_at = CURRENT_TIMESTAMP
   `);
-  upsertStmt.run(userId, currentMonth, usage.totalTokens || 0);
+  upsertStmt.run(userId, currentMonth, totalTokens, billableTokens);
 }
 
 export function getUsageStats(userId) {
@@ -93,7 +100,7 @@ export function getUsageStats(userId) {
 
   // Get monthly rollup
   const rollupStmt = db.prepare(`
-    SELECT request_count, total_tokens
+    SELECT request_count, total_tokens, billable_tokens
     FROM llm_usage_monthly
     WHERE user_id = ? AND month = ?
   `);
@@ -127,12 +134,14 @@ export function getUsageStats(userId) {
   `);
   const daily = dailyStmt.all(userId);
 
+  const used = rollup?.billable_tokens || 0;
+
   return {
     month: currentMonth,
     tier,
     limit: limit === Infinity ? null : limit,
-    used: rollup?.request_count || 0,
-    remaining: limit === Infinity ? null : Math.max(0, limit - (rollup?.request_count || 0)),
+    used,
+    remaining: limit === Infinity ? null : Math.max(0, limit - used),
     resetsAt: getResetsAt(),
     totalTokens: rollup?.total_tokens || 0,
     breakdown: breakdown.map(row => ({
@@ -157,5 +166,5 @@ export function getRateLimit(tier = 'free') {
 
 export function getQuotaLimit(tier = 'free') {
   const tierConfig = CONFIG.quota[tier] || CONFIG.quota.free;
-  return tierConfig.monthlyRequests;
+  return tierConfig.monthlyTokens;
 }

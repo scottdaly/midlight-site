@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS llm_usage_monthly (
   month TEXT NOT NULL,                   -- '2025-12' format
   request_count INTEGER DEFAULT 0,
   total_tokens INTEGER DEFAULT 0,
+  billable_tokens INTEGER DEFAULT 0,     -- Tokens excluding classification/compaction overhead
   search_count INTEGER DEFAULT 0,        -- Monthly search count
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

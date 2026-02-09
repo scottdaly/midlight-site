@@ -57,18 +57,18 @@ export const CONFIG = {
     },
   },
 
-  // Usage quotas
+  // Usage quotas (token-based)
   quota: {
     free: {
-      monthlyRequests: 100,
+      monthlyTokens: 500000,
       maxTokensPerRequest: 4000,
     },
     premium: {
-      monthlyRequests: Infinity,
+      monthlyTokens: Infinity,
       maxTokensPerRequest: 8000,
     },
     pro: {
-      monthlyRequests: Infinity,
+      monthlyTokens: Infinity,
       maxTokensPerRequest: 16000,
     },
   },

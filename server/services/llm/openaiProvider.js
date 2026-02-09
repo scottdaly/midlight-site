@@ -57,6 +57,20 @@ function convertMessages(messages) {
         tool_call_id: msg.toolCallId,
         content: msg.content
       };
+    } else if (Array.isArray(msg.content)) {
+      // Multimodal message (vision) — convert to OpenAI format
+      return {
+        role: msg.role,
+        content: msg.content.map(part => {
+          if (part.type === 'image') {
+            return {
+              type: 'image_url',
+              image_url: { url: `data:${part.mediaType};base64,${part.data}` }
+            };
+          }
+          return { type: 'text', text: part.text };
+        })
+      };
     } else {
       // Regular message (system, user, or assistant without tool calls)
       return {

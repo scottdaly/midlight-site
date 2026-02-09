@@ -25,13 +25,24 @@ export const KIMI_MODELS = [
     tier: 'free',
     contextWindow: 262144, // 256k context
     maxOutput: 8192
+  },
+  {
+    id: 'kimi-k2.5-thinking',
+    name: 'Kimi K2.5 Thinking',
+    tier: 'free',
+    contextWindow: 262144,
+    maxOutput: 8192
   }
 ];
 
-// Model IDs (same for both providers)
+// Model IDs (same for both providers) — thinking alias maps to same underlying model
 const MODEL_ID_MAP = {
-  'kimi-k2.5': 'moonshotai/kimi-k2.5'
+  'kimi-k2.5': 'moonshotai/kimi-k2.5',
+  'kimi-k2.5-thinking': 'moonshotai/kimi-k2.5'
 };
+
+// Models that should enable thinking mode
+const THINKING_MODELS = new Set(['kimi-k2.5-thinking']);
 
 // Convert our message format to OpenAI format (Kimi is OpenAI-compatible)
 function convertMessages(messages) {
@@ -56,6 +67,20 @@ function convertMessages(messages) {
         role: 'tool',
         tool_call_id: msg.toolCallId,
         content: msg.content
+      };
+    } else if (Array.isArray(msg.content)) {
+      // Multimodal message (vision) — convert to OpenAI-compatible format
+      return {
+        role: msg.role,
+        content: msg.content.map(part => {
+          if (part.type === 'image') {
+            return {
+              type: 'image_url',
+              image_url: { url: `data:${part.mediaType};base64,${part.data}` }
+            };
+          }
+          return { type: 'text', text: part.text };
+        })
       };
     } else {
       // Regular message (system, user, or assistant without tool calls)
@@ -100,14 +125,16 @@ export async function chat({
 }) {
   const apiModel = MODEL_ID_MAP[model] || model;
 
+  const isThinking = THINKING_MODELS.has(model);
   const params = {
     model: apiModel,
     messages: convertMessages(messages),
     max_tokens: maxTokens,
     stream,
-    // Kimi recommended settings
-    temperature: temperature ?? 0.6,
-    top_p: 0.95
+    // Thinking mode: temperature=1.0 recommended; instant: 0.6
+    temperature: isThinking ? 1.0 : (temperature ?? 0.6),
+    top_p: 0.95,
+    ...(isThinking ? { chat_template_kwargs: { thinking: true } } : {})
   };
 
   if (stream) {
@@ -212,6 +239,7 @@ export async function chatWithTools({
 }) {
   const apiModel = MODEL_ID_MAP[model] || model;
 
+  const isThinking = THINKING_MODELS.has(model);
   const params = {
     model: apiModel,
     messages: convertMessages(messages),
@@ -224,8 +252,9 @@ export async function chatWithTools({
       }
     })),
     max_tokens: maxTokens,
-    temperature: temperature ?? 0.6,
-    top_p: 0.95
+    temperature: isThinking ? 1.0 : (temperature ?? 0.6),
+    top_p: 0.95,
+    ...(isThinking ? { chat_template_kwargs: { thinking: true } } : {})
   };
 
   return withFallback(async (client, source) => {

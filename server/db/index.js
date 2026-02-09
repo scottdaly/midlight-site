@@ -165,6 +165,26 @@ function runMigrations() {
         console.log('Migration: Recreated sync content tables without foreign keys');
       }
     },
+    // Add billable_tokens column to llm_usage_monthly
+    {
+      name: 'add_billable_tokens_to_llm_usage_monthly',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage_monthly)").all();
+        return cols.some(c => c.name === 'billable_tokens');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage_monthly ADD COLUMN billable_tokens INTEGER DEFAULT 0");
+        // Backfill from detail table — exclude classification/compaction overhead
+        db.exec(`UPDATE llm_usage_monthly SET billable_tokens = (
+          SELECT COALESCE(SUM(total_tokens), 0)
+          FROM llm_usage
+          WHERE llm_usage.user_id = llm_usage_monthly.user_id
+            AND strftime('%Y-%m', llm_usage.created_at) = llm_usage_monthly.month
+            AND (llm_usage.request_type IS NULL OR llm_usage.request_type NOT IN ('classification', 'compaction'))
+        )`);
+        console.log('Migration: Added billable_tokens to llm_usage_monthly table');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',
