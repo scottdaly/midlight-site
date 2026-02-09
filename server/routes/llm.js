@@ -216,6 +216,7 @@ router.post('/chat-with-tools', [
           if (chunk.type === 'content') {
             res.write(`data: ${JSON.stringify({ type: 'content', content: chunk.content })}\n\n`);
           } else if (chunk.type === 'thinking') {
+            console.log(`[LLM Stream] Thinking chunk: ${chunk.thinking?.substring(0, 80)}...`);
             res.write(`data: ${JSON.stringify({ type: 'thinking', thinking: chunk.thinking })}\n\n`);
           } else if (chunk.type === 'tool_call') {
             res.write(`data: ${JSON.stringify({ type: 'tool_call', toolCall: chunk.toolCall })}\n\n`);

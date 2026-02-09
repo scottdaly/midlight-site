@@ -304,6 +304,126 @@ export async function chatWithTools({
   });
 }
 
+export async function* chatWithToolsStream({
+  model,
+  messages,
+  tools,
+  temperature = 0.7,
+  maxTokens = 4096,
+  webSearchEnabled = false
+}) {
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const isThinking = THINKING_MODELS.has(model);
+
+  const params = {
+    model: apiModel,
+    messages: convertMessages(messages),
+    tools: tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters
+      }
+    })),
+    max_tokens: maxTokens,
+    stream: true,
+    temperature: isThinking ? 1.0 : (temperature ?? 0.6),
+    top_p: 0.95,
+    ...(isThinking ? { chat_template_kwargs: { thinking: true } } : {})
+  };
+
+  let client = nvidiaClient;
+  let source = 'nvidia';
+  if (!client) {
+    client = togetherClient;
+    source = 'together';
+  }
+  if (!client) {
+    throw new Error('No Kimi API configured. Set NVIDIA_API_KEY or KIMI_API_KEY.');
+  }
+
+  let stream;
+  try {
+    stream = await client.chat.completions.create(params);
+  } catch (error) {
+    if (source === 'nvidia' && togetherClient) {
+      console.warn('[Kimi] NVIDIA streaming failed, falling back to Together AI:', error.message);
+      client = togetherClient;
+      source = 'together';
+      stream = await client.chat.completions.create(params);
+    } else {
+      throw error;
+    }
+  }
+
+  console.log(`[Kimi] Streaming with tools via ${source}`);
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  // Accumulate tool calls by index
+  const toolCallAccumulators = new Map();
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta;
+
+    // Thinking/reasoning content
+    const thinking = delta?.reasoning_content || delta?.reasoning || '';
+    if (thinking) {
+      yield { type: 'thinking', thinking };
+    }
+
+    // Regular content
+    const content = delta?.content || '';
+    if (content) {
+      yield { type: 'content', content };
+    }
+
+    // Tool calls (streamed incrementally by index)
+    if (delta?.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        if (!toolCallAccumulators.has(idx)) {
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '' });
+        }
+        const acc = toolCallAccumulators.get(idx);
+        if (tc.id) acc.id = tc.id;
+        if (tc.function?.name) acc.name = tc.function.name;
+        if (tc.function?.arguments) acc.arguments += tc.function.arguments;
+      }
+    }
+
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens;
+      completionTokens = chunk.usage.completion_tokens;
+    }
+  }
+
+  // Emit completed tool calls
+  for (const [, acc] of toolCallAccumulators) {
+    let args = {};
+    try {
+      args = acc.arguments ? JSON.parse(acc.arguments) : {};
+    } catch (e) {
+      console.error('[Kimi] Failed to parse streamed tool arguments:', acc.arguments?.substring(0, 200), e);
+    }
+    yield {
+      type: 'tool_call',
+      toolCall: { id: acc.id, name: acc.name, arguments: args }
+    };
+  }
+
+  yield {
+    type: 'done',
+    finishReason: 'stop',
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens
+    }
+  };
+}
+
 export function isConfigured() {
   return !!(process.env.NVIDIA_API_KEY || process.env.KIMI_API_KEY);
 }
