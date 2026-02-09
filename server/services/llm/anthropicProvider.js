@@ -22,6 +22,13 @@ export const ANTHROPIC_MODELS = [
     maxOutput: 8192
   },
   {
+    id: 'claude-sonnet-4-5-thinking',
+    name: 'Claude Sonnet 4.5 (Thinking)',
+    tier: 'premium',
+    contextWindow: 200000,
+    maxOutput: 16384
+  },
+  {
     id: 'claude-opus-4-5-20251101',
     name: 'Claude Opus 4.5',
     tier: 'pro',
@@ -29,6 +36,14 @@ export const ANTHROPIC_MODELS = [
     maxOutput: 8192
   }
 ];
+
+// Alias → real API model ID
+const MODEL_ID_MAP = {
+  'claude-sonnet-4-5-thinking': 'claude-sonnet-4-5-20250929',
+};
+
+// Models that use extended thinking
+const THINKING_MODELS = new Set(['claude-sonnet-4-5-thinking']);
 
 // Convert OpenAI-style messages to Anthropic format
 function convertMessages(messages) {
@@ -74,6 +89,20 @@ function convertMessages(messages) {
           content: msg.content
         }]
       });
+    } else if (Array.isArray(msg.content)) {
+      // Multimodal message (vision) — convert to Anthropic format
+      anthropicMessages.push({
+        role: 'user',
+        content: msg.content.map(part => {
+          if (part.type === 'image') {
+            return {
+              type: 'image',
+              source: { type: 'base64', media_type: part.mediaType, data: part.data }
+            };
+          }
+          return { type: 'text', text: part.text };
+        })
+      });
     } else {
       // User messages
       anthropicMessages.push({
@@ -94,12 +123,18 @@ export async function chat({
   stream = false
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const isThinking = THINKING_MODELS.has(model);
 
   const params = {
-    model,
-    max_tokens: maxTokens,
+    model: apiModel,
+    max_tokens: isThinking ? Math.max(maxTokens, 16384) : maxTokens,
     messages: anthropicMessages,
-    ...(systemMessage && { system: systemMessage })
+    ...(systemMessage && { system: systemMessage }),
+    ...(isThinking && {
+      thinking: { type: 'enabled', budget_tokens: 10240 },
+      temperature: 1.0
+    })
   };
 
   if (stream) {
@@ -186,6 +221,8 @@ export async function chatWithTools({
   webSearchEnabled = false  // Ignored - search handled by Tavily service
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const isThinking = THINKING_MODELS.has(model);
 
   // Convert function tools to Anthropic format
   const anthropicTools = tools.map(tool => ({
@@ -197,11 +234,15 @@ export async function chatWithTools({
   let response;
   try {
     response = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
+      model: apiModel,
+      max_tokens: isThinking ? Math.max(maxTokens, 16384) : maxTokens,
       messages: anthropicMessages,
       ...(systemMessage && { system: systemMessage }),
-      ...(anthropicTools.length > 0 && { tools: anthropicTools })
+      ...(anthropicTools.length > 0 && { tools: anthropicTools }),
+      ...(isThinking && {
+        thinking: { type: 'enabled', budget_tokens: 10240 },
+        temperature: 1.0
+      })
     });
   } catch (error) {
     const normalizedError = new Error(error.message || 'Anthropic request failed');
@@ -247,6 +288,8 @@ export async function* chatWithToolsStream({
   webSearchEnabled = false
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const isThinking = THINKING_MODELS.has(model);
 
   const anthropicTools = tools.map(tool => ({
     name: tool.name,
@@ -255,11 +298,15 @@ export async function* chatWithToolsStream({
   }));
 
   const params = {
-    model,
-    max_tokens: maxTokens,
+    model: apiModel,
+    max_tokens: isThinking ? Math.max(maxTokens, 16384) : maxTokens,
     messages: anthropicMessages,
     ...(systemMessage && { system: systemMessage }),
-    ...(anthropicTools.length > 0 && { tools: anthropicTools })
+    ...(anthropicTools.length > 0 && { tools: anthropicTools }),
+    ...(isThinking && {
+      thinking: { type: 'enabled', budget_tokens: 10240 },
+      temperature: 1.0
+    })
   };
 
   const stream = await client.messages.stream(params);

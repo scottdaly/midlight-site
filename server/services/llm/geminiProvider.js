@@ -13,6 +13,20 @@ export const GEMINI_MODELS = [
     maxOutput: 65536
   },
   {
+    id: 'gemini-3-flash-thinking-low',
+    name: 'Gemini 3 Flash (Thinking Low)',
+    tier: 'free',
+    contextWindow: 1048576,
+    maxOutput: 65536
+  },
+  {
+    id: 'gemini-3-flash-thinking-high',
+    name: 'Gemini 3 Flash (Thinking High)',
+    tier: 'free',
+    contextWindow: 1048576,
+    maxOutput: 65536
+  },
+  {
     id: 'gemini-3-pro-preview',
     name: 'Gemini 3 Pro',
     tier: 'premium',
@@ -20,6 +34,18 @@ export const GEMINI_MODELS = [
     maxOutput: 65536
   }
 ];
+
+// Alias → real API model ID
+const MODEL_ID_MAP = {
+  'gemini-3-flash-thinking-low': 'gemini-3-flash-preview',
+  'gemini-3-flash-thinking-high': 'gemini-3-flash-preview',
+};
+
+// Alias → thinkingConfig params
+const THINKING_CONFIG = {
+  'gemini-3-flash-thinking-low': { thinkingConfig: { thinkingBudget: 2048 } },
+  'gemini-3-flash-thinking-high': { thinkingConfig: { thinkingBudget: 24576 } },
+};
 
 // Convert OpenAI-style messages to Gemini format
 function convertMessages(messages) {
@@ -72,6 +98,17 @@ function convertMessages(messages) {
           }
         }]
       });
+    } else if (Array.isArray(msg.content)) {
+      // Multimodal message (vision) — convert to Gemini format
+      geminiContents.push({
+        role: 'user',
+        parts: msg.content.map(part => {
+          if (part.type === 'image') {
+            return { inlineData: { mimeType: part.mediaType, data: part.data } };
+          }
+          return { text: part.text };
+        })
+      });
     } else {
       // User messages
       geminiContents.push({
@@ -105,13 +142,16 @@ export async function chat({
   stream = false
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const thinkingCfg = THINKING_CONFIG[model];
 
   const generativeModel = genAI.getGenerativeModel({
-    model,
+    model: apiModel,
     ...(systemInstruction && { systemInstruction }),
     generationConfig: {
       temperature,
-      maxOutputTokens: maxTokens
+      maxOutputTokens: maxTokens,
+      ...(thinkingCfg || {})
     }
   });
 
@@ -196,14 +236,17 @@ export async function chatWithTools({
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
   const geminiTools = convertTools(tools);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const thinkingCfg = THINKING_CONFIG[model];
 
   const generativeModel = genAI.getGenerativeModel({
-    model,
+    model: apiModel,
     ...(systemInstruction && { systemInstruction }),
     ...(geminiTools && { tools: [geminiTools] }),
     generationConfig: {
       temperature,
-      maxOutputTokens: maxTokens
+      maxOutputTokens: maxTokens,
+      ...(thinkingCfg || {})
     }
   });
 
