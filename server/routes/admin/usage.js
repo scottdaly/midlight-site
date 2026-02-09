@@ -114,6 +114,25 @@ router.get('/overview', (req, res) => {
       ORDER BY requests DESC
     `).all();
 
+    // By effort lane × model (for verifying routing decisions)
+    const byLaneModelRaw = db.prepare(`
+      SELECT
+        COALESCE(effort_lane, 'unknown') as lane,
+        provider, model,
+        COUNT(*) as requests,
+        COALESCE(SUM(prompt_tokens), 0) as promptTokens,
+        COALESCE(SUM(completion_tokens), 0) as completionTokens,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE created_at >= date('now', 'start of month')
+      GROUP BY COALESCE(effort_lane, 'unknown'), provider, model
+      ORDER BY lane, requests DESC
+    `).all();
+    const byLaneModel = byLaneModelRaw.map(row => ({
+      ...row,
+      costCents: Math.round(computeCostCents(row.provider, row.model, row.promptTokens, row.completionTokens) * 100) / 100
+    }));
+
     res.json({
       month: currentMonth,
       totalRequests: totals.totalRequests,
@@ -123,7 +142,8 @@ router.get('/overview', (req, res) => {
       byProvider,
       byModel,
       byTier,
-      byLane
+      byLane,
+      byLaneModel
     });
   } catch (err) {
     logger.error({ error: err?.message || err }, 'Error fetching usage overview');
