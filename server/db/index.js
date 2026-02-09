@@ -109,9 +109,7 @@ function runMigrations() {
             content TEXT NOT NULL,
             sidecar TEXT NOT NULL,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (document_id, user_id),
-            FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            PRIMARY KEY (document_id, user_id)
           );
 
           CREATE INDEX IF NOT EXISTS idx_sync_document_content_user ON sync_document_content(user_id);
@@ -123,11 +121,48 @@ function runMigrations() {
             content TEXT NOT NULL,
             sidecar TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, document_id, version),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            PRIMARY KEY (user_id, document_id, version)
           );
         `);
         console.log('Migration: Created sync_document_content and sync_conflict_content tables');
+      }
+    },
+    // Recreate sync content tables without foreign keys (fixes FOREIGN KEY constraint failed on upload)
+    {
+      name: 'recreate_sync_content_no_fk',
+      check: () => {
+        // Check if the table has foreign keys by looking at the CREATE statement
+        const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sync_document_content'").get();
+        // If table doesn't exist or doesn't have FOREIGN KEY, skip
+        return !tableInfo || !tableInfo.sql.includes('FOREIGN KEY');
+      },
+      run: () => {
+        db.exec(`
+          DROP TABLE IF EXISTS sync_document_content;
+          DROP TABLE IF EXISTS sync_conflict_content;
+
+          CREATE TABLE sync_document_content (
+            document_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            sidecar TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (document_id, user_id)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_sync_document_content_user ON sync_document_content(user_id);
+
+          CREATE TABLE sync_conflict_content (
+            user_id INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            sidecar TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, document_id, version)
+          );
+        `);
+        console.log('Migration: Recreated sync content tables without foreign keys');
       }
     },
     // Create RAG tables for web semantic search

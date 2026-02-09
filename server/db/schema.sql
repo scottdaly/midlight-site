@@ -294,15 +294,14 @@ CREATE TABLE IF NOT EXISTS sync_usage (
 
 -- Sync Document Content (SQLite fallback when R2 is not configured)
 -- Stores actual document content + sidecar directly in SQLite
+-- No foreign keys: content is inserted before sync_documents row exists (optimistic upload pattern)
 CREATE TABLE IF NOT EXISTS sync_document_content (
   document_id TEXT NOT NULL,
   user_id INTEGER NOT NULL,
   content TEXT NOT NULL,                    -- Document content (markdown or JSON)
   sidecar TEXT NOT NULL,                    -- Sidecar JSON string
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (document_id, user_id),
-  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  PRIMARY KEY (document_id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_document_content_user ON sync_document_content(user_id);
@@ -315,8 +314,7 @@ CREATE TABLE IF NOT EXISTS sync_conflict_content (
   content TEXT NOT NULL,
   sidecar TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, document_id, version),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  PRIMARY KEY (user_id, document_id, version)
 );
 
 -- Sync Operations Log (for debugging and analytics)
