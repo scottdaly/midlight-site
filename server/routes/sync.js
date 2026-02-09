@@ -444,7 +444,7 @@ router.post(
     } catch (error) {
       logger.error({ error: error?.message || error, stack: error?.stack, userId: req.user.id }, 'Sync upload error');
       logSyncOperation(req.user.id, null, 'upload', req.body?.path, 0, false, error?.message);
-      res.status(500).json({ error: 'Failed to sync document', detail: error?.message });
+      res.status(500).json({ error: 'Failed to sync document' });
     }
   }
 );
@@ -494,7 +494,7 @@ router.get('/documents/:id', [param('id').isUUID()], async (req, res) => {
     });
   } catch (error) {
     logger.error({ error: error?.message || error, stack: error?.stack, userId: req.user.id }, 'Sync download error');
-    res.status(500).json({ error: 'Failed to download document', detail: error?.message });
+    res.status(500).json({ error: 'Failed to download document' });
   }
 });
 
