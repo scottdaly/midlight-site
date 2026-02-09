@@ -164,7 +164,12 @@ export function findOrCreateOAuthUser({ provider, providerUserId, email, display
   const existingUser = findUserByEmail(email);
 
   if (existingUser) {
-    // Link OAuth account to existing user
+    // If existing user has a password, do NOT auto-link — require them to log in with password first
+    if (existingUser.password_hash) {
+      return { needsLinking: true, email, provider };
+    }
+
+    // OAuth-only user — safe to link additional providers
     const linkStmt = db.prepare(`
       INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_email, provider_data)
       VALUES (?, ?, ?, ?, ?)

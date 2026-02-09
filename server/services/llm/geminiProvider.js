@@ -6,6 +6,13 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 // Users can access any model at or below their subscription tier
 export const GEMINI_MODELS = [
   {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    tier: 'free',
+    contextWindow: 1048576,
+    maxOutput: 65536
+  },
+  {
     id: 'gemini-3-flash-preview',
     name: 'Gemini 3 Flash',
     tier: 'free',

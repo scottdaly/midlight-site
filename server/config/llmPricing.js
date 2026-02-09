@@ -7,6 +7,7 @@ const PRICING = {
   'anthropic:claude-haiku-4-5-20251001':   { inputPer1M: 0.80,  outputPer1M: 4.00 },
   'anthropic:claude-sonnet-4-5-20250929':  { inputPer1M: 3.00,  outputPer1M: 15.00 },
   'anthropic:claude-opus-4-5-20251101':    { inputPer1M: 15.00, outputPer1M: 75.00 },
+  'gemini:gemini-2.5-flash-lite':           { inputPer1M: 0.075, outputPer1M: 0.30 },
   'gemini:gemini-3-flash-preview':         { inputPer1M: 0.075, outputPer1M: 0.30 },
   'gemini:gemini-3-pro-preview':           { inputPer1M: 1.25,  outputPer1M: 5.00 },
   'kimi:kimi-k2.5':                        { inputPer1M: 0.00,  outputPer1M: 0.00 },

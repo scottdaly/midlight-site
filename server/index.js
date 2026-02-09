@@ -21,7 +21,8 @@ import syncRouter from './routes/sync.js';
 import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
 import { configurePassport } from './config/passport.js';
-import { cleanupExpiredSessions } from './services/tokenService.js';
+import { cleanupExpiredSessions, cleanupExpiredOAuthStates, cleanupExpiredCodes, cleanupExpiredPasswordResetTokens, cleanupExpiredEmailVerificationTokens } from './services/tokenService.js';
+import { cleanupOldAuthEvents } from './services/auditService.js';
 import db from './db/index.js';
 import { getProviderStatus } from './services/llm/index.js';
 import {
@@ -280,15 +281,26 @@ app.use(errorHandler);             // Global error handler
 // Setup process-level error handlers
 setupProcessErrorHandlers();
 
-// Cleanup expired sessions periodically (every hour)
+// Cleanup expired tokens and sessions periodically (every hour)
 setInterval(() => {
   try {
-    const result = cleanupExpiredSessions();
-    if (result.changes > 0) {
-      logger.info({ sessionsRemoved: result.changes }, 'Cleaned up expired sessions');
+    const sessions = cleanupExpiredSessions();
+    const oauthStates = cleanupExpiredOAuthStates();
+    const codes = cleanupExpiredCodes();
+    const resetTokens = cleanupExpiredPasswordResetTokens();
+    const verificationTokens = cleanupExpiredEmailVerificationTokens();
+    const totalChanges = sessions.changes + oauthStates.changes + codes.changes + resetTokens.changes + verificationTokens.changes;
+    if (totalChanges > 0) {
+      logger.info({
+        sessionsRemoved: sessions.changes,
+        oauthStatesRemoved: oauthStates.changes,
+        codesRemoved: codes.changes,
+        resetTokensRemoved: resetTokens.changes,
+        verificationTokensRemoved: verificationTokens.changes
+      }, 'Cleaned up expired tokens');
     }
   } catch (error) {
-    logger.error({ error: error.message }, 'Session cleanup error');
+    logger.error({ error: error.message }, 'Token cleanup error');
   }
 }, 60 * 60 * 1000);
 
@@ -301,11 +313,13 @@ setInterval(() => {
     const alerts = db.prepare(
       "DELETE FROM alert_history WHERE triggered_at < datetime('now', '-90 days')"
     ).run();
-    if (reports.changes > 0 || alerts.changes > 0) {
+    const authEvents = cleanupOldAuthEvents();
+    if (reports.changes > 0 || alerts.changes > 0 || authEvents.changes > 0) {
       logger.info({
         reportsRemoved: reports.changes,
-        alertsRemoved: alerts.changes
-      }, 'Cleaned up old error reports and alerts');
+        alertsRemoved: alerts.changes,
+        authEventsRemoved: authEvents.changes
+      }, 'Cleaned up old error reports, alerts, and auth events');
     }
   } catch (error) {
     logger.error({ error: error.message }, 'Error report cleanup error');

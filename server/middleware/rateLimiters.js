@@ -27,6 +27,14 @@ export const refreshLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+export const exchangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 attempts per window per IP
+  message: { error: 'Too many exchange attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ============================================================================
 // Password Change Rate Limiting (database-backed, per-user)
 // ============================================================================

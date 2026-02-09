@@ -16,12 +16,14 @@ export function configurePassport() {
       scope: ['profile', 'email']
     }, (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails?.[0]?.value;
+        // Use verified email only — reject if no verified email found
+        const verifiedEmail = profile.emails?.find(e => e.verified === true || e.verified === 'true');
+        const email = verifiedEmail?.value || profile.emails?.[0]?.value;
         if (!email) {
           return done(new Error('No email provided by Google'));
         }
 
-        const user = findOrCreateOAuthUser({
+        const result = findOrCreateOAuthUser({
           provider: 'google',
           providerUserId: profile.id,
           email,
@@ -35,7 +37,12 @@ export function configurePassport() {
           }
         });
 
-        return done(null, user);
+        // If account exists with password, don't auto-link
+        if (result.needsLinking) {
+          return done(null, false, { message: 'account_exists', email: result.email });
+        }
+
+        return done(null, result);
       } catch (error) {
         return done(error);
       }

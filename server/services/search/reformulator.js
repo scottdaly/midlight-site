@@ -1,9 +1,9 @@
 // Query reformulation: Convert conversational queries to search-optimized queries
-// Uses Haiku for fast, cheap reformulation (~$0.001)
+// Uses Gemini 2.5 Flash Lite for fast, cheap reformulation
 
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const REFORMULATION_MODEL = 'claude-haiku-4-5-20251001';
+const REFORMULATION_MODEL = 'gemini-2.5-flash-lite';
 
 /**
  * Get the current month and year for time-sensitive queries
@@ -62,28 +62,26 @@ export async function reformulateQuery(userMessage, conversationContext) {
   const newsKeywords = /\b(news|latest|recent|today|current|happening|update|announce)/i;
   const defaultIsNews = newsKeywords.test(userMessage);
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn('[Reformulator] Anthropic not configured, using original query');
+  if (!process.env.GEMINI_API_KEY) {
+    console.warn('[Reformulator] Gemini not configured, using original query');
     return { queries: [userMessage], isNewsQuery: defaultIsNews };
   }
 
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY
-  });
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
   const userContent = conversationContext
     ? `Previous context: ${conversationContext}\n\nCurrent question: ${userMessage}`
     : userMessage;
 
   try {
-    const response = await client.messages.create({
+    const model = genAI.getGenerativeModel({
       model: REFORMULATION_MODEL,
-      max_tokens: 150,
-      system: buildReformulationPrompt(),
-      messages: [{ role: 'user', content: userContent }]
+      systemInstruction: buildReformulationPrompt(),
+      generationConfig: { maxOutputTokens: 150, temperature: 0 },
     });
 
-    let text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+    const result = await model.generateContent(userContent);
+    let text = result.response.text() || '{}';
 
     // Strip markdown code blocks if present
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -147,5 +145,5 @@ export function getReformulatorUsage() {
  * @returns {boolean}
  */
 export function isConfigured() {
-  return !!process.env.ANTHROPIC_API_KEY;
+  return !!process.env.GEMINI_API_KEY;
 }

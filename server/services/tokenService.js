@@ -44,17 +44,24 @@ export function verifyAccessToken(token) {
   }
 }
 
+const MAX_SESSIONS_PER_USER = 10;
+
 export async function createSession(userId, refreshToken, userAgent, ipHash) {
   const tokenHash = hashToken(refreshToken);
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
-  // Remove any existing sessions from the same user/device combination
-  // This prevents duplicate sessions when a user logs in multiple times from the same browser
-  const deleteStmt = db.prepare(`
-    DELETE FROM sessions
-    WHERE user_id = ? AND user_agent = ? AND ip_hash = ?
-  `);
-  deleteStmt.run(userId, userAgent, ipHash);
+  // Enforce per-user session cap — delete oldest sessions if at limit
+  const countStmt = db.prepare('SELECT COUNT(*) as count FROM sessions WHERE user_id = ?');
+  const { count } = countStmt.get(userId);
+  if (count >= MAX_SESSIONS_PER_USER) {
+    const deleteOldest = db.prepare(`
+      DELETE FROM sessions WHERE id IN (
+        SELECT id FROM sessions WHERE user_id = ?
+        ORDER BY created_at ASC LIMIT ?
+      )
+    `);
+    deleteOldest.run(userId, count - MAX_SESSIONS_PER_USER + 1);
+  }
 
   const stmt = db.prepare(`
     INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_hash, expires_at)
@@ -118,38 +125,44 @@ export function generateTokenPair(userId, userAgent, ipHash) {
 const EXCHANGE_CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Generate a one-time exchange code that can be traded for tokens
+ * Generate a one-time exchange code that can be traded for tokens.
+ * Only stores a hash of the code + userId — no tokens stored.
  * @param {number} userId - The user ID
- * @param {object} tokens - Object with accessToken and refreshToken
  * @returns {string} - The exchange code
  */
-export function generateExchangeCode(userId, tokens) {
+export function generateExchangeCode(userId) {
   const code = crypto.randomBytes(32).toString('hex');
+  const codeHash = hashToken(code);
   const expiresAt = new Date(Date.now() + EXCHANGE_CODE_EXPIRY_MS);
 
   const stmt = db.prepare(`
     INSERT INTO oauth_codes (code, user_id, access_token, refresh_token, expires_at)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (?, ?, '', '', ?)
   `);
 
-  stmt.run(code, userId, tokens.accessToken, tokens.refreshToken, expiresAt.toISOString());
+  stmt.run(codeHash, userId, expiresAt.toISOString());
 
   return code;
 }
 
 /**
- * Exchange a one-time code for tokens (single use)
+ * Exchange a one-time code for tokens (single use).
+ * Generates fresh tokens at exchange time instead of retrieving stored ones.
  * @param {string} code - The exchange code
+ * @param {string} userAgent - Client user agent
+ * @param {string} ipHash - Hashed client IP
  * @returns {object|null} - Tokens object or null if invalid/expired/used
  */
-export function exchangeCodeForTokens(code) {
-  // Get the code
+export function exchangeCodeForTokens(code, userAgent, ipHash) {
+  const codeHash = hashToken(code);
+
+  // Lookup by hash
   const getStmt = db.prepare(`
     SELECT * FROM oauth_codes
     WHERE code = ? AND used = 0 AND expires_at > datetime('now')
   `);
 
-  const codeRecord = getStmt.get(code);
+  const codeRecord = getStmt.get(codeHash);
 
   if (!codeRecord) {
     return null;
@@ -157,12 +170,15 @@ export function exchangeCodeForTokens(code) {
 
   // Mark as used immediately (single use)
   const updateStmt = db.prepare('UPDATE oauth_codes SET used = 1 WHERE code = ?');
-  updateStmt.run(code);
+  updateStmt.run(codeHash);
+
+  // Generate fresh tokens at exchange time
+  const tokens = generateTokenPair(codeRecord.user_id, userAgent || 'unknown', ipHash || 'unknown');
 
   return {
     userId: codeRecord.user_id,
-    accessToken: codeRecord.access_token,
-    refreshToken: codeRecord.refresh_token
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken
   };
 }
 
@@ -178,56 +194,64 @@ export function cleanupExpiredCodes() {
 }
 
 // OAuth State Management
-// Use cryptographically secure state tokens instead of predictable values
+// Persisted in database to survive server restarts
 
-const pendingOAuthStates = new Map();
 const OAUTH_STATE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Generate a secure OAuth state token
+ * Generate a secure OAuth state token (persisted in DB)
  * @param {boolean} isDesktop - Whether this is a desktop app OAuth flow
  * @param {number|null} devCallbackPort - Port for dev mode HTTP callback (null for production/protocol)
  * @returns {string} - The state token
  */
 export function generateOAuthState(isDesktop, devCallbackPort = null) {
   const state = crypto.randomBytes(32).toString('hex');
+  const stateHash = hashToken(state);
+  const expiresAt = new Date(Date.now() + OAUTH_STATE_EXPIRY_MS);
 
-  pendingOAuthStates.set(state, {
-    isDesktop,
-    devCallbackPort,
-    createdAt: Date.now()
-  });
-
-  // Clean up after expiry
-  setTimeout(() => {
-    pendingOAuthStates.delete(state);
-  }, OAUTH_STATE_EXPIRY_MS);
+  const stmt = db.prepare(`
+    INSERT INTO oauth_states (state_hash, is_desktop, dev_callback_port, expires_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(stateHash, isDesktop ? 1 : 0, devCallbackPort, expiresAt.toISOString());
 
   return state;
 }
 
 /**
- * Validate and consume an OAuth state token
+ * Validate and consume an OAuth state token (single use)
  * @param {string} state - The state token to validate
  * @returns {object|null} - State data or null if invalid/expired
  */
 export function validateOAuthState(state) {
-  const stateData = pendingOAuthStates.get(state);
+  const stateHash = hashToken(state);
+
+  const getStmt = db.prepare(`
+    SELECT * FROM oauth_states
+    WHERE state_hash = ? AND expires_at > datetime('now')
+  `);
+  const stateData = getStmt.get(stateHash);
 
   if (!stateData) {
     return null;
   }
 
-  // Check expiry
-  if (Date.now() - stateData.createdAt > OAUTH_STATE_EXPIRY_MS) {
-    pendingOAuthStates.delete(state);
-    return null;
-  }
+  // Consume the state (single use — delete immediately)
+  const deleteStmt = db.prepare('DELETE FROM oauth_states WHERE state_hash = ?');
+  deleteStmt.run(stateHash);
 
-  // Consume the state (single use)
-  pendingOAuthStates.delete(state);
+  return {
+    isDesktop: stateData.is_desktop === 1,
+    devCallbackPort: stateData.dev_callback_port
+  };
+}
 
-  return stateData;
+/**
+ * Clean up expired OAuth states
+ */
+export function cleanupExpiredOAuthStates() {
+  const stmt = db.prepare("DELETE FROM oauth_states WHERE expires_at <= datetime('now')");
+  return stmt.run();
 }
 
 // Password Reset Token Functions
@@ -291,5 +315,69 @@ export function consumePasswordResetToken(token) {
  */
 export function cleanupExpiredPasswordResetTokens() {
   const stmt = db.prepare("DELETE FROM password_reset_tokens WHERE expires_at <= datetime('now')");
+  return stmt.run();
+}
+
+// Email Verification Token Functions
+
+const EMAIL_VERIFICATION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Generate an email verification token for a user
+ * @param {number} userId - The user ID
+ * @returns {string} - The verification token
+ */
+export function generateEmailVerificationToken(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
+
+  // Delete any existing verification tokens for this user
+  const deleteStmt = db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?');
+  deleteStmt.run(userId);
+
+  // Insert new token
+  const stmt = db.prepare(`
+    INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+  `);
+  stmt.run(userId, tokenHash, expiresAt.toISOString());
+
+  return token;
+}
+
+/**
+ * Validate an email verification token
+ * @param {string} token - The verification token
+ * @returns {object|null} - User ID and email if valid, null otherwise
+ */
+export function validateEmailVerificationToken(token) {
+  const tokenHash = hashToken(token);
+
+  const stmt = db.prepare(`
+    SELECT evt.user_id, u.email, u.display_name
+    FROM email_verification_tokens evt
+    JOIN users u ON evt.user_id = u.id
+    WHERE evt.token_hash = ? AND evt.expires_at > datetime('now')
+  `);
+
+  return stmt.get(tokenHash) || null;
+}
+
+/**
+ * Consume (delete) an email verification token after successful verification
+ * @param {string} token - The verification token
+ */
+export function consumeEmailVerificationToken(token) {
+  const tokenHash = hashToken(token);
+  const stmt = db.prepare('DELETE FROM email_verification_tokens WHERE token_hash = ?');
+  stmt.run(tokenHash);
+}
+
+/**
+ * Clean up expired email verification tokens
+ */
+export function cleanupExpiredEmailVerificationTokens() {
+  const stmt = db.prepare("DELETE FROM email_verification_tokens WHERE expires_at <= datetime('now')");
   return stmt.run();
 }

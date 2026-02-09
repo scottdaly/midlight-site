@@ -185,6 +185,79 @@ function runMigrations() {
         console.log('Migration: Added billable_tokens to llm_usage_monthly table');
       }
     },
+    // Create email_verification_tokens table
+    {
+      name: 'create_email_verification_tokens',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='email_verification_tokens'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS email_verification_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT UNIQUE NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id);
+          CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_hash ON email_verification_tokens(token_hash);
+          CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verification_tokens(expires_at);
+        `);
+        console.log('Migration: Created email_verification_tokens table');
+      }
+    },
+    // Create oauth_states table
+    {
+      name: 'create_oauth_states',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oauth_states'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS oauth_states (
+            state_hash TEXT PRIMARY KEY,
+            is_desktop INTEGER NOT NULL DEFAULT 0,
+            dev_callback_port INTEGER,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+        `);
+        console.log('Migration: Created oauth_states table');
+      }
+    },
+    // Create auth_events audit log table
+    {
+      name: 'create_auth_events',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='auth_events'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS auth_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            event_type TEXT NOT NULL,
+            ip_hash TEXT,
+            user_agent TEXT,
+            metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_auth_events_user ON auth_events(user_id);
+          CREATE INDEX IF NOT EXISTS idx_auth_events_type ON auth_events(event_type);
+          CREATE INDEX IF NOT EXISTS idx_auth_events_created ON auth_events(created_at);
+        `);
+        console.log('Migration: Created auth_events table');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',

@@ -8,7 +8,8 @@ import {
   createUser,
   verifyPassword,
   hashIP,
-  updatePassword
+  updatePassword,
+  updateUser
 } from '../services/authService.js';
 import {
   generateTokenPair,
@@ -22,10 +23,15 @@ import {
   validateOAuthState,
   generatePasswordResetToken,
   validatePasswordResetToken,
-  consumePasswordResetToken
+  consumePasswordResetToken,
+  generateEmailVerificationToken,
+  validateEmailVerificationToken,
+  consumeEmailVerificationToken
 } from '../services/tokenService.js';
-import { sendPasswordResetEmail } from '../services/emailService.js';
-import { authLimiter, signupLimiter, refreshLimiter } from '../middleware/rateLimiters.js';
+import { sendPasswordResetEmail, sendEmailVerificationEmail } from '../services/emailService.js';
+import { authLimiter, signupLimiter, refreshLimiter, exchangeLimiter } from '../middleware/rateLimiters.js';
+import { requireAuth } from '../middleware/auth.js';
+import { logAuthEvent } from '../services/auditService.js';
 
 const router = Router();
 
@@ -152,7 +158,8 @@ const signupValidation = [
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
-    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/).withMessage('Password must contain at least one special character'),
   body('displayName').optional().trim().isLength({ min: 1, max: 100 })
 ];
 
@@ -205,12 +212,20 @@ router.post('/signup', signupLimiter, signupValidation, async (req, res) => {
     // Create user
     const user = await createUser({ email, password, displayName });
 
+    // Send verification email (fire-and-forget — don't block signup)
+    const verificationToken = generateEmailVerificationToken(user.id);
+    sendEmailVerificationEmail(email, verificationToken, displayName).catch(err => {
+      logger.error({ error: err?.message || err, email }, 'Failed to send verification email');
+    });
+
     // Generate tokens
     const { userAgent, ipHash } = getClientInfo(req);
     const tokens = generateTokenPair(user.id, userAgent, ipHash);
 
     // Set refresh token cookie
     setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+
+    logAuthEvent({ userId: user.id, eventType: 'signup', ipHash, userAgent });
 
     res.status(201).json({
       user: {
@@ -253,16 +268,19 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
 
     // Verify password
     const validPassword = await verifyPassword(password, user.password_hash);
+    const { userAgent, ipHash } = getClientInfo(req);
     if (!validPassword) {
+      logAuthEvent({ userId: user.id, eventType: 'login_failed', ipHash, userAgent });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     // Generate tokens
-    const { userAgent, ipHash } = getClientInfo(req);
     const tokens = generateTokenPair(user.id, userAgent, ipHash);
 
     // Set refresh token cookie
     setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+
+    logAuthEvent({ userId: user.id, eventType: 'login', ipHash, userAgent });
 
     res.json({
       user: {
@@ -330,6 +348,11 @@ router.post('/logout', (req, res) => {
     const refreshToken = req.cookies?.refreshToken;
 
     if (refreshToken) {
+      const session = validateSession(refreshToken);
+      if (session) {
+        const { userAgent, ipHash } = getClientInfo(req);
+        logAuthEvent({ userId: session.user_id, eventType: 'logout', ipHash, userAgent });
+      }
       invalidateSession(refreshToken);
     }
 
@@ -353,6 +376,7 @@ const resetPasswordValidation = [
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/).withMessage('Password must contain at least one special character')
 ];
 
 // POST /api/auth/forgot-password
@@ -374,26 +398,25 @@ router.post('/forgot-password', authLimiter, forgotPasswordValidation, async (re
       // Check if user has a password (not OAuth-only)
       if (!user.password_hash) {
         // OAuth-only user - still return success but don't send email
-        // They need to use their OAuth provider
         logger.info({ email }, 'Password reset requested for OAuth-only account');
       } else {
-        // Generate reset token and send email
+        // Generate reset token and send email (fire-and-forget to prevent timing attacks)
         const token = generatePasswordResetToken(user.id);
-        await sendPasswordResetEmail(email, token, user.display_name);
-        logger.info({ email }, 'Password reset email sent');
+        sendPasswordResetEmail(email, token, user.display_name).catch(err => {
+          logger.error({ error: err?.message || err, email }, 'Failed to send password reset email');
+        });
       }
     } else {
       logger.info({ email }, 'Password reset requested for non-existent email');
     }
 
-    // Always return success to prevent email enumeration
+    // Always return success immediately to prevent email enumeration
     res.json({
       success: true,
       message: 'If an account with that email exists, we sent a password reset link.'
     });
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Forgot password error');
-    // Still return success to prevent email enumeration via timing attacks
     res.json({
       success: true,
       message: 'If an account with that email exists, we sent a password reset link.'
@@ -429,6 +452,8 @@ router.post('/reset-password', authLimiter, resetPasswordValidation, async (req,
     // Invalidate all existing sessions (security best practice)
     invalidateAllUserSessions(tokenData.user_id);
 
+    const { userAgent, ipHash } = getClientInfo(req);
+    logAuthEvent({ userId: tokenData.user_id, eventType: 'password_reset', ipHash, userAgent });
     logger.info({ userId: tokenData.user_id }, 'Password reset successful');
 
     res.json({
@@ -438,6 +463,67 @@ router.post('/reset-password', authLimiter, resetPasswordValidation, async (req,
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Reset password error');
     res.status(500).json({ error: 'Failed to reset password. Please try again.' });
+  }
+});
+
+// POST /api/auth/verify-email
+// Verifies a user's email using a token from the verification email
+router.post('/verify-email', (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token required' });
+    }
+
+    const tokenData = validateEmailVerificationToken(token);
+    if (!tokenData) {
+      return res.status(400).json({
+        error: 'Invalid or expired verification link. Please request a new one.'
+      });
+    }
+
+    // Mark email as verified
+    updateUser(tokenData.user_id, { emailVerified: 1 });
+
+    // Consume the token
+    consumeEmailVerificationToken(token);
+
+    logAuthEvent({ userId: tokenData.user_id, eventType: 'email_verified' });
+    logger.info({ userId: tokenData.user_id }, 'Email verified');
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully.'
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Email verification error');
+    res.status(500).json({ error: 'Email verification failed. Please try again.' });
+  }
+});
+
+// POST /api/auth/resend-verification
+// Resends the verification email (requires authentication)
+router.post('/resend-verification', requireAuth, (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.email_verified) {
+      return res.json({ success: true, message: 'Email is already verified.' });
+    }
+
+    const token = generateEmailVerificationToken(user.id);
+    sendEmailVerificationEmail(user.email, token, user.display_name).catch(err => {
+      logger.error({ error: err?.message || err, email: user.email }, 'Failed to resend verification email');
+    });
+
+    res.json({
+      success: true,
+      message: 'Verification email sent.'
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Resend verification error');
+    res.status(500).json({ error: 'Failed to resend verification email.' });
   }
 });
 
@@ -464,7 +550,19 @@ router.get('/google/callback', (req, res, next) => {
     return res.redirect(`${WEB_REDIRECT_BASE}/login?error=invalid_state`);
   }
 
-  passport.authenticate('google', { session: false }, (err, user) => {
+  passport.authenticate('google', { session: false }, (err, user, info) => {
+    // Handle account_exists (email/password account exists, can't auto-link OAuth)
+    if (info?.message === 'account_exists') {
+      const encodedEmail = encodeURIComponent(info.email || '');
+      if (stateData.isDesktop) {
+        if (stateData.devCallbackPort) {
+          return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?error=account_exists`);
+        }
+        return renderDesktopCallbackPage(res, { success: false, error: 'account_exists' });
+      }
+      return res.redirect(`${WEB_REDIRECT_BASE}/login?error=account_exists&email=${encodedEmail}`);
+    }
+
     if (err || !user) {
       logger.error({ error: err?.message || err }, 'Google auth error');
       if (stateData.isDesktop) {
@@ -478,13 +576,9 @@ router.get('/google/callback', (req, res, next) => {
       return res.redirect(`${WEB_REDIRECT_BASE}/login?error=auth_failed`);
     }
 
-    // Generate tokens
-    const { userAgent, ipHash } = getClientInfo(req);
-    const tokens = generateTokenPair(user.id, userAgent, ipHash);
-
     if (stateData.isDesktop) {
       // Desktop: use one-time exchange code instead of exposing tokens in URL
-      const code = generateExchangeCode(user.id, tokens);
+      const code = generateExchangeCode(user.id);
       // Dev mode: redirect to local HTTP server instead of protocol handler
       if (stateData.devCallbackPort) {
         return res.redirect(`http://localhost:${stateData.devCallbackPort}/auth/callback?code=${code}`);
@@ -495,13 +589,13 @@ router.get('/google/callback', (req, res, next) => {
 
     // Web: use one-time exchange code instead of exposing tokens in URL
     // This is more secure as the code is single-use and short-lived
-    const code = generateExchangeCode(user.id, tokens);
+    const code = generateExchangeCode(user.id);
     res.redirect(`${WEB_REDIRECT_BASE}/login?code=${code}`);
   })(req, res, next);
 });
 
 // POST /api/auth/exchange - Exchange one-time code for tokens (used by both desktop and web)
-router.post('/exchange', (req, res) => {
+router.post('/exchange', exchangeLimiter, (req, res) => {
   try {
     const { code } = req.body;
 
@@ -509,7 +603,8 @@ router.post('/exchange', (req, res) => {
       return res.status(400).json({ error: 'Exchange code required' });
     }
 
-    const result = exchangeCodeForTokens(code);
+    const { userAgent, ipHash } = getClientInfo(req);
+    const result = exchangeCodeForTokens(code, userAgent, ipHash);
 
     if (!result) {
       return res.status(401).json({ error: 'Invalid or expired code' });
