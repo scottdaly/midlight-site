@@ -1,10 +1,10 @@
 // Search need classification with rule-based + LLM hybrid approach
 // Follows existing provider pattern in services/llm/
 
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
-// Haiku model for fast, cheap classification
-const CLASSIFIER_MODEL = 'claude-haiku-4-5-20251001';
+// GPT-5 Nano for fast, cheap classification ($0.10/M input)
+const CLASSIFIER_MODEL = 'gpt-5-nano';
 
 // Pattern definitions for rule-based classification
 const SEARCH_TRIGGERS = {
@@ -146,13 +146,14 @@ Be conservative - only return needsSearch: true when search would genuinely impr
  * @returns {Promise<{needsSearch: boolean, reason: string}>}
  */
 export async function classifyWithLLM(message, conversationContext) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn('[SearchClassifier] Anthropic not configured, falling back to rules');
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('[SearchClassifier] OpenAI not configured, falling back to rules');
     return { needsSearch: false, reason: 'no_api_key' };
   }
 
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    timeout: 1500 // 1.5s timeout — this is a non-critical optimization step
   });
 
   const userContent = conversationContext
@@ -160,14 +161,16 @@ export async function classifyWithLLM(message, conversationContext) {
     : message;
 
   try {
-    const response = await client.messages.create({
+    const response = await client.chat.completions.create({
       model: CLASSIFIER_MODEL,
       max_tokens: 100,
-      system: CLASSIFIER_PROMPT,
-      messages: [{ role: 'user', content: userContent }]
-    }, { timeout: 1500 }); // 1.5s timeout — this is a non-critical optimization step
+      messages: [
+        { role: 'system', content: CLASSIFIER_PROMPT },
+        { role: 'user', content: userContent }
+      ]
+    });
 
-    let text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+    let text = response.choices[0]?.message?.content || '{}';
 
     // Strip markdown code fences if present (e.g. ```json ... ```)
     const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
