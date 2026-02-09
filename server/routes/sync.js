@@ -442,9 +442,9 @@ router.post(
         },
       });
     } catch (error) {
-      logger.error({ error: error?.message || error, userId: req.user.id }, 'Sync upload error');
+      logger.error({ error: error?.message || error, stack: error?.stack, userId: req.user.id }, 'Sync upload error');
       logSyncOperation(req.user.id, null, 'upload', req.body?.path, 0, false, error?.message);
-      res.status(500).json({ error: 'Failed to sync document' });
+      res.status(500).json({ error: 'Failed to sync document', detail: error?.message });
     }
   }
 );
@@ -493,8 +493,8 @@ router.get('/documents/:id', [param('id').isUUID()], async (req, res) => {
       updatedAt: doc.updated_at,
     });
   } catch (error) {
-    logger.error({ error: error?.message || error, userId: req.user.id }, 'Sync download error');
-    res.status(500).json({ error: 'Failed to download document' });
+    logger.error({ error: error?.message || error, stack: error?.stack, userId: req.user.id }, 'Sync download error');
+    res.status(500).json({ error: 'Failed to download document', detail: error?.message });
   }
 });
 
