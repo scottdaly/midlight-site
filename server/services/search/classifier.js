@@ -107,8 +107,10 @@ export function classifyWithRules(message) {
     return { needsSearch: true, confidence: 'medium', reason: trigger };
   }
 
-  // No triggers = low confidence, default to no search
-  return { needsSearch: false, confidence: 'low', reason: 'no_triggers' };
+  // No triggers at all = high confidence no search.
+  // Most messages are general knowledge / chat that don't need search.
+  // Only medium-confidence cases (single ambiguous trigger) warrant an LLM call.
+  return { needsSearch: false, confidence: 'high', reason: 'no_triggers' };
 }
 
 // LLM classifier prompt
@@ -165,7 +167,11 @@ export async function classifyWithLLM(message, conversationContext) {
       messages: [{ role: 'user', content: userContent }]
     }, { timeout: 1500 }); // 1.5s timeout — this is a non-critical optimization step
 
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+    let text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+
+    // Strip markdown code fences if present (e.g. ```json ... ```)
+    const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) text = fenceMatch[1].trim();
 
     try {
       const parsed = JSON.parse(text);
@@ -174,7 +180,7 @@ export async function classifyWithLLM(message, conversationContext) {
         reason: parsed.reason || 'llm_decision'
       };
     } catch {
-      console.warn('[SearchClassifier] Failed to parse LLM response:', text);
+      console.warn('[SearchClassifier] Failed to parse LLM response:', text.substring(0, 200));
       return { needsSearch: false, reason: 'parse_error' };
     }
   } catch (error) {
