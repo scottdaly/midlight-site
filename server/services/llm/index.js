@@ -291,8 +291,11 @@ export async function chatWithToolsStream({
   webSearchEnabled = false,
   userTier = 'free'
 }) {
+  const t0 = Date.now();
+
   // Check quota
   const quota = await checkQuota(userId);
+  console.log(`[LLM Timing] Quota check: ${Date.now() - t0}ms`);
   if (!quota.allowed) {
     const error = new Error('Monthly quota exceeded');
     error.code = 'QUOTA_EXCEEDED';
@@ -311,9 +314,11 @@ export async function chatWithToolsStream({
   }
 
   // Run search pipeline
+  const t1 = Date.now();
   const { messagesWithSearch, searchResult } = await runSearchIfEnabled({
     messages, webSearchEnabled, userTier, userId
   });
+  console.log(`[LLM Timing] Search pipeline: ${Date.now() - t1}ms`);
 
   let sources = [];
   if (searchResult?.searchExecuted && searchResult.results?.length > 0) {

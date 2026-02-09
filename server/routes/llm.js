@@ -200,6 +200,8 @@ router.post('/chat-with-tools', [
       res.setHeader('X-Accel-Buffering', 'no');
 
       try {
+        const reqStart = Date.now();
+        console.log(`[LLM Route] chat-with-tools stream request: provider=${provider}, model=${model}`);
         const streamResult = await chatWithToolsStream({
           userId: req.user.id,
           provider,
@@ -211,12 +213,17 @@ router.post('/chat-with-tools', [
           webSearchEnabled,
           userTier
         });
+        console.log(`[LLM Route] Stream setup complete: ${Date.now() - reqStart}ms`);
 
+        let firstChunkSent = false;
         for await (const chunk of streamResult.stream) {
+          if (!firstChunkSent) {
+            console.log(`[LLM Route] First chunk to client: ${Date.now() - reqStart}ms (type: ${chunk.type})`);
+            firstChunkSent = true;
+          }
           if (chunk.type === 'content') {
             res.write(`data: ${JSON.stringify({ type: 'content', content: chunk.content })}\n\n`);
           } else if (chunk.type === 'thinking') {
-            console.log(`[LLM Stream] Thinking chunk: ${chunk.thinking?.substring(0, 80)}...`);
             res.write(`data: ${JSON.stringify({ type: 'thinking', thinking: chunk.thinking })}\n\n`);
           } else if (chunk.type === 'tool_call') {
             res.write(`data: ${JSON.stringify({ type: 'tool_call', toolCall: chunk.toolCall })}\n\n`);

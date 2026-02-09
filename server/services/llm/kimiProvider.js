@@ -344,6 +344,7 @@ export async function* chatWithToolsStream({
   }
 
   let stream;
+  const connectStart = Date.now();
   try {
     stream = await client.chat.completions.create(params);
   } catch (error) {
@@ -357,14 +358,21 @@ export async function* chatWithToolsStream({
     }
   }
 
-  console.log(`[Kimi] Streaming with tools via ${source}`);
+  const streamStart = Date.now();
+  console.log(`[Kimi] Streaming with tools via ${source} (connection: ${streamStart - connectStart}ms)`);
 
   let promptTokens = 0;
   let completionTokens = 0;
+  let firstChunkLogged = false;
   // Accumulate tool calls by index
   const toolCallAccumulators = new Map();
 
   for await (const chunk of stream) {
+    if (!firstChunkLogged) {
+      console.log(`[Kimi] First chunk received: ${Date.now() - streamStart}ms after stream start (type: ${chunk.choices[0]?.delta?.reasoning_content ? 'thinking' : chunk.choices[0]?.delta?.content ? 'content' : chunk.choices[0]?.delta?.tool_calls ? 'tool_call' : 'other'})`);
+      firstChunkLogged = true;
+    }
+
     const delta = chunk.choices[0]?.delta;
 
     // Thinking/reasoning content
