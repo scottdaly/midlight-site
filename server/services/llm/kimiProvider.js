@@ -5,9 +5,12 @@ import OpenAI from 'openai';
 // Fallback: Together AI (paid, more reliable)
 
 // NVIDIA client (primary - free)
+// 8s timeout: NVIDIA free tier can be very slow to connect (14s+ observed).
+// If it doesn't connect in time, we fall back to Together AI.
 const nvidiaClient = process.env.NVIDIA_API_KEY ? new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY,
-  baseURL: 'https://integrate.api.nvidia.com/v1'
+  baseURL: 'https://integrate.api.nvidia.com/v1',
+  timeout: 8000
 }) : null;
 
 // Together AI client (fallback)

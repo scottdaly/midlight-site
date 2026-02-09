@@ -163,7 +163,7 @@ export async function classifyWithLLM(message, conversationContext) {
       max_tokens: 100,
       system: CLASSIFIER_PROMPT,
       messages: [{ role: 'user', content: userContent }]
-    });
+    }, { timeout: 1500 }); // 1.5s timeout — this is a non-critical optimization step
 
     const text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
 
