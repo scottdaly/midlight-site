@@ -34,10 +34,11 @@ async function cleanupExpiredDocuments() {
   let cleaned = 0;
   for (const doc of expired) {
     try {
-      // Delete R2 objects
+      // Delete storage objects (R2 or SQLite content)
       await storage.deleteDocumentObjects(doc.user_id, doc.id);
 
-      // Hard-delete DB row
+      // Hard-delete DB rows (content table cleaned by CASCADE or explicit delete)
+      db.prepare('DELETE FROM sync_document_content WHERE document_id = ? AND user_id = ?').run(doc.id, doc.user_id);
       db.prepare('DELETE FROM sync_documents WHERE id = ?').run(doc.id);
       cleaned++;
     } catch (error) {

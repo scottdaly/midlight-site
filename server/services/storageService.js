@@ -1,6 +1,7 @@
 /**
- * R2 Storage Service
- * Handles document storage in Cloudflare R2 using S3-compatible API
+ * Storage Service
+ * Handles document storage in Cloudflare R2 (preferred) or SQLite (fallback)
+ * When R2 is not configured, stores content directly in SQLite tables.
  */
 
 import {
@@ -13,6 +14,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
+import db from '../db/index.js';
 
 // R2 Configuration
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
@@ -21,7 +23,7 @@ const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'midlight-documents';
 
 // Check if R2 is configured
-const isR2Configured = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY;
+const isR2Configured = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY);
 
 // Initialize S3 client for R2
 let s3Client = null;
@@ -35,6 +37,9 @@ if (isR2Configured) {
       secretAccessKey: R2_SECRET_ACCESS_KEY,
     },
   });
+  console.log('[Storage] Using Cloudflare R2 storage');
+} else {
+  console.log('[Storage] R2 not configured, using SQLite fallback storage');
 }
 
 /**
@@ -59,12 +64,144 @@ function hashContent(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+// ============================================================================
+// SQLite Fallback Implementation
+// ============================================================================
+
+function sqliteUploadDocument(userId, documentId, content, sidecar) {
+  const sidecarJson = JSON.stringify(sidecar);
+  const contentHash = hashContent(content);
+  const sidecarHash = hashContent(sidecarJson);
+  const contentSize = Buffer.byteLength(content, 'utf-8');
+  const sidecarSize = Buffer.byteLength(sidecarJson, 'utf-8');
+
+  db.prepare(`
+    INSERT INTO sync_document_content (document_id, user_id, content, sidecar, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(document_id, user_id) DO UPDATE SET
+      content = excluded.content,
+      sidecar = excluded.sidecar,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(documentId, userId, content, sidecarJson);
+
+  return {
+    contentKey: `sqlite:${documentId}:content`,
+    sidecarKey: `sqlite:${documentId}:sidecar`,
+    contentHash,
+    sidecarHash,
+    sizeBytes: contentSize + sidecarSize,
+  };
+}
+
+function sqliteDownloadDocument(userId, documentId) {
+  const row = db.prepare(
+    'SELECT content, sidecar FROM sync_document_content WHERE document_id = ? AND user_id = ?'
+  ).get(documentId, userId);
+
+  if (!row) {
+    return null;
+  }
+
+  const sidecar = JSON.parse(row.sidecar);
+  return {
+    content: row.content,
+    sidecar,
+    contentHash: hashContent(row.content),
+    sidecarHash: hashContent(row.sidecar),
+  };
+}
+
+function sqliteDeleteDocument(userId, documentId) {
+  db.prepare(
+    'DELETE FROM sync_document_content WHERE document_id = ? AND user_id = ?'
+  ).run(documentId, userId);
+}
+
+function sqliteDocumentExists(userId, documentId) {
+  const row = db.prepare(
+    'SELECT 1 FROM sync_document_content WHERE document_id = ? AND user_id = ?'
+  ).get(documentId, userId);
+  return !!row;
+}
+
+function sqlitePreserveVersion(userId, documentId, version, content, sidecar) {
+  const sidecarJson = JSON.stringify(sidecar);
+
+  db.prepare(`
+    INSERT INTO sync_conflict_content (user_id, document_id, version, content, sidecar)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, document_id, version) DO UPDATE SET
+      content = excluded.content,
+      sidecar = excluded.sidecar
+  `).run(userId, documentId, version, content, sidecarJson);
+
+  return {
+    contentKey: `sqlite:conflict:${documentId}:${version}:content`,
+    sidecarKey: `sqlite:conflict:${documentId}:${version}:sidecar`,
+  };
+}
+
+function sqliteGetConflictVersion(userId, documentId, version) {
+  const row = db.prepare(
+    'SELECT content, sidecar FROM sync_conflict_content WHERE user_id = ? AND document_id = ? AND version = ?'
+  ).get(userId, documentId, version);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    content: row.content,
+    sidecar: JSON.parse(row.sidecar),
+  };
+}
+
+function sqliteDeleteConflictVersions(userId, documentId, versions) {
+  const stmt = db.prepare(
+    'DELETE FROM sync_conflict_content WHERE user_id = ? AND document_id = ? AND version = ?'
+  );
+  for (const version of versions) {
+    stmt.run(userId, documentId, version);
+  }
+}
+
+function sqliteListUserDocuments(userId) {
+  const rows = db.prepare(`
+    SELECT c.document_id, LENGTH(c.content) + LENGTH(c.sidecar) as size, c.updated_at
+    FROM sync_document_content c
+    WHERE c.user_id = ?
+  `).all(userId);
+
+  return rows.map(row => ({
+    documentId: row.document_id,
+    lastModified: row.updated_at,
+    size: row.size,
+  }));
+}
+
+function sqliteGetUserStorageUsage(userId) {
+  const row = db.prepare(`
+    SELECT COUNT(*) as doc_count, COALESCE(SUM(LENGTH(content) + LENGTH(sidecar)), 0) as total_size
+    FROM sync_document_content
+    WHERE user_id = ?
+  `).get(userId);
+
+  return {
+    totalSize: row?.total_size || 0,
+    documentCount: row?.doc_count || 0,
+  };
+}
+
+// ============================================================================
+// Public API (dispatches to R2 or SQLite)
+// ============================================================================
+
 /**
- * Upload document content to R2
+ * Upload document content
  */
 export async function uploadDocument(userId, documentId, content, sidecar) {
-  if (!s3Client) {
-    throw new Error('R2 storage not configured');
+  if (!isR2Configured) {
+    return sqliteUploadDocument(userId, documentId, content, sidecar);
   }
 
   const contentKey = generateKey(userId, documentId, 'content.md');
@@ -113,11 +250,11 @@ export async function uploadDocument(userId, documentId, content, sidecar) {
 }
 
 /**
- * Download document from R2
+ * Download document
  */
 export async function downloadDocument(userId, documentId) {
-  if (!s3Client) {
-    throw new Error('R2 storage not configured');
+  if (!isR2Configured) {
+    return sqliteDownloadDocument(userId, documentId);
   }
 
   const contentKey = generateKey(userId, documentId, 'content.md');
@@ -158,11 +295,11 @@ export async function downloadDocument(userId, documentId) {
 }
 
 /**
- * Delete document from R2
+ * Delete document
  */
 export async function deleteDocument(userId, documentId) {
-  if (!s3Client) {
-    throw new Error('R2 storage not configured');
+  if (!isR2Configured) {
+    return sqliteDeleteDocument(userId, documentId);
   }
 
   const contentKey = generateKey(userId, documentId, 'content.md');
@@ -185,11 +322,11 @@ export async function deleteDocument(userId, documentId) {
 }
 
 /**
- * Check if a document exists in R2
+ * Check if a document exists
  */
 export async function documentExists(userId, documentId) {
-  if (!s3Client) {
-    return false;
+  if (!isR2Configured) {
+    return sqliteDocumentExists(userId, documentId);
   }
 
   const contentKey = generateKey(userId, documentId, 'content.md');
@@ -214,8 +351,8 @@ export async function documentExists(userId, documentId) {
  * Preserve a version for conflict resolution
  */
 export async function preserveVersion(userId, documentId, version, content, sidecar) {
-  if (!s3Client) {
-    throw new Error('R2 storage not configured');
+  if (!isR2Configured) {
+    return sqlitePreserveVersion(userId, documentId, version, content, sidecar);
   }
 
   const contentKey = generateConflictKey(userId, documentId, version, 'content.md');
@@ -247,8 +384,8 @@ export async function preserveVersion(userId, documentId, version, content, side
  * Get a preserved conflict version
  */
 export async function getConflictVersion(userId, documentId, version) {
-  if (!s3Client) {
-    throw new Error('R2 storage not configured');
+  if (!isR2Configured) {
+    return sqliteGetConflictVersion(userId, documentId, version);
   }
 
   const contentKey = generateConflictKey(userId, documentId, version, 'content.md');
@@ -286,8 +423,8 @@ export async function getConflictVersion(userId, documentId, version) {
  * Delete conflict versions after resolution
  */
 export async function deleteConflictVersions(userId, documentId, versions) {
-  if (!s3Client) {
-    return;
+  if (!isR2Configured) {
+    return sqliteDeleteConflictVersions(userId, documentId, versions);
   }
 
   const deletePromises = [];
@@ -318,8 +455,8 @@ export async function deleteConflictVersions(userId, documentId, versions) {
  * List all documents for a user (for initial sync)
  */
 export async function listUserDocuments(userId) {
-  if (!s3Client) {
-    return [];
+  if (!isR2Configured) {
+    return sqliteListUserDocuments(userId);
   }
 
   const prefix = `users/${userId}/documents/`;
@@ -364,8 +501,8 @@ export async function listUserDocuments(userId) {
  * Get total storage usage for a user
  */
 export async function getUserStorageUsage(userId) {
-  if (!s3Client) {
-    return { totalSize: 0, documentCount: 0 };
+  if (!isR2Configured) {
+    return sqliteGetUserStorageUsage(userId);
   }
 
   const prefix = `users/${userId}/`;
@@ -406,7 +543,7 @@ export async function getUserStorageUsage(userId) {
  */
 export async function getDownloadUrl(userId, documentId, expiresIn = 3600) {
   if (!s3Client) {
-    throw new Error('R2 storage not configured');
+    throw new Error('Pre-signed URLs require R2 storage');
   }
 
   const contentKey = generateKey(userId, documentId, 'content.md');
@@ -424,10 +561,11 @@ export async function getDownloadUrl(userId, documentId, expiresIn = 3600) {
 }
 
 /**
- * Check if R2 is configured and available
+ * Check if storage is available (R2 or SQLite fallback)
  */
 export function isStorageAvailable() {
-  return isR2Configured && s3Client !== null;
+  // Always available: either R2 is configured, or we fall back to SQLite
+  return true;
 }
 
 export default {

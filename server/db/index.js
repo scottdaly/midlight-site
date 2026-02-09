@@ -94,6 +94,42 @@ function runMigrations() {
         console.log('Migration: Added stack_trace to error_reports table');
       }
     },
+    // Create sync_document_content table (SQLite fallback for R2 storage)
+    {
+      name: 'create_sync_document_content',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_document_content'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS sync_document_content (
+            document_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            sidecar TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (document_id, user_id),
+            FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_sync_document_content_user ON sync_document_content(user_id);
+
+          CREATE TABLE IF NOT EXISTS sync_conflict_content (
+            user_id INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            sidecar TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, document_id, version),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          );
+        `);
+        console.log('Migration: Created sync_document_content and sync_conflict_content tables');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',
