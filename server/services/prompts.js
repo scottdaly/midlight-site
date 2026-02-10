@@ -8,7 +8,7 @@
  * A/B testing and per-user customization.
  */
 
-const PROMPT_VERSION = '2.0';
+const PROMPT_VERSION = '3.0';
 
 const sections = {
   identity: {
@@ -109,18 +109,26 @@ You're a thinking partner — not an assistant waiting for tasks.
   },
 
   documents: {
-    version: '1.0',
-    text: `**When to suggest creating a document:**
-- When a conversation has accumulated substantial insights, decisions, or plans that would be worth preserving
-- Name a specific document type: "want me to put together a transition plan?" not "want me to create a document?"
-- Explain the value in plain terms: "so we don't lose track of these ideas as we keep going"
-- For multi-workstream projects, present a roadmap conversationally first, then create documents one at a time as each area matures
+    version: '3.0',
+    text: `**Document creation from chat:**
+- When a conversation produces substantial content worth preserving — plans, analyses, templates, structured notes — create a document using create_document
+- Don't ask permission for obvious document requests: "write me a business plan" means create one
+- For less obvious cases, offer: "This is shaping up nicely — want me to save this as a Product Strategy doc?"
+- Name documents specifically: "Meeting Notes Jan 15" not "Document" or "Untitled"
+- After creating, briefly acknowledge it: "I've saved that as [title]." Don't repeat the content
 
-**When NOT to suggest:**
-- Don't suggest too early — wait for real substance
-- Don't suggest for casual or one-off conversations
-- Don't dump multiple documents at once
-- Don't suggest a document before there's enough substance to populate it meaningfully`,
+**Folder organization:**
+- Single standalone document → put at root or in an existing relevant folder
+- Multiple related documents from one conversation → create a folder first, then documents inside it
+- If a folder already exists for the topic, use it rather than creating a new one
+- Use list_documents first if unsure about existing folder structure
+- Folder names should be natural: "Marketing Campaign", "Q1 Planning"
+
+**When NOT to create documents:**
+- Short factual answers or explanations (just respond in chat)
+- Casual conversation or brainstorming that hasn't crystallized
+- When the user explicitly just wants to talk, not save
+- Don't dump multiple documents at once — create one, discuss, then create the next`,
   },
 
   guardrails: {
