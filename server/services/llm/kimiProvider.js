@@ -395,12 +395,21 @@ export async function* chatWithToolsStream({
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0;
         if (!toolCallAccumulators.has(idx)) {
-          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '' });
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false });
         }
         const acc = toolCallAccumulators.get(idx);
         if (tc.id) acc.id = tc.id;
         if (tc.function?.name) acc.name = tc.function.name;
         if (tc.function?.arguments) acc.arguments += tc.function.arguments;
+
+        // Emit early notification as soon as we know the tool name + id
+        if (acc.id && acc.name && !acc.notified) {
+          acc.notified = true;
+          yield {
+            type: 'tool_call',
+            toolCall: { id: acc.id, name: acc.name, arguments: {} }
+          };
+        }
       }
     }
 

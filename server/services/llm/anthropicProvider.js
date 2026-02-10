@@ -327,6 +327,11 @@ export async function* chatWithToolsStream({
           name: event.content_block.name,
         };
         currentToolInput = '';
+        // Emit early notification so frontend can show "Creating document..." immediately
+        yield {
+          type: 'tool_call',
+          toolCall: { id: currentToolCall.id, name: currentToolCall.name, arguments: {} }
+        };
       }
     }
 
