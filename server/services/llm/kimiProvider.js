@@ -369,6 +369,7 @@ export async function* chatWithToolsStream({
   let firstChunkLogged = false;
   // Accumulate tool calls by index
   const toolCallAccumulators = new Map();
+  let toolCallsStarted = false;
 
   for await (const chunk of stream) {
     if (!firstChunkLogged) {
@@ -384,18 +385,19 @@ export async function* chatWithToolsStream({
       yield { type: 'thinking', thinking };
     }
 
-    // Regular content
+    // Regular content — suppress once tool calls have started (fragments are leaked args)
     const content = delta?.content || '';
-    if (content) {
+    if (content && !toolCallsStarted) {
       yield { type: 'content', content };
     }
 
     // Tool calls (streamed incrementally by index)
     if (delta?.tool_calls) {
+      toolCallsStarted = true;
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0;
         if (!toolCallAccumulators.has(idx)) {
-          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false });
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false, titleSent: false });
         }
         const acc = toolCallAccumulators.get(idx);
         if (tc.id) acc.id = tc.id;
@@ -409,6 +411,22 @@ export async function* chatWithToolsStream({
             type: 'tool_call',
             toolCall: { id: acc.id, name: acc.name, arguments: {} }
           };
+        }
+
+        // Try to extract path/title from partial args and send an update
+        if (acc.notified && !acc.titleSent && acc.arguments.length > 20) {
+          const pathMatch = acc.arguments.match(/"path"\s*:\s*"([^"]+)"/);
+          const titleMatch = acc.arguments.match(/"title"\s*:\s*"([^"]+)"/);
+          if (pathMatch || titleMatch) {
+            acc.titleSent = true;
+            const partialArgs = {};
+            if (pathMatch) partialArgs.path = pathMatch[1];
+            if (titleMatch) partialArgs.title = titleMatch[1];
+            yield {
+              type: 'tool_call',
+              toolCall: { id: acc.id, name: acc.name, arguments: partialArgs }
+            };
+          }
         }
       }
     }
