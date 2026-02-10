@@ -397,7 +397,7 @@ export async function* chatWithToolsStream({
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0;
         if (!toolCallAccumulators.has(idx)) {
-          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false, titleSent: false });
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false, extractedPath: null, extractedTitle: null, lastProgressAt: 0 });
         }
         const acc = toolCallAccumulators.get(idx);
         if (tc.id) acc.id = tc.id;
@@ -413,15 +413,27 @@ export async function* chatWithToolsStream({
           };
         }
 
-        // Try to extract path/title from partial args and send an update
-        if (acc.notified && !acc.titleSent && acc.arguments.length > 20) {
-          const pathMatch = acc.arguments.match(/"path"\s*:\s*"([^"]+)"/);
-          const titleMatch = acc.arguments.match(/"title"\s*:\s*"([^"]+)"/);
-          if (pathMatch || titleMatch) {
-            acc.titleSent = true;
+        // Periodically extract metadata and send progress updates
+        if (acc.notified && acc.arguments.length > 20) {
+          // Try to extract path/title if not yet found
+          if (!acc.extractedPath) {
+            const pathMatch = acc.arguments.match(/"path"\s*:\s*"([^"]+)"/);
+            if (pathMatch) acc.extractedPath = pathMatch[1];
+          }
+          if (!acc.extractedTitle) {
+            const titleMatch = acc.arguments.match(/"title"\s*:\s*"([^"]+)"/);
+            if (titleMatch) acc.extractedTitle = titleMatch[1];
+          }
+
+          // Send update when title/path first found, or periodically every ~2000 chars
+          const hasNewMeta = (acc.extractedPath || acc.extractedTitle) && acc.lastProgressAt === 0;
+          const hasProgress = acc.arguments.length - acc.lastProgressAt >= 2000;
+          if (hasNewMeta || hasProgress) {
+            acc.lastProgressAt = acc.arguments.length;
             const partialArgs = {};
-            if (pathMatch) partialArgs.path = pathMatch[1];
-            if (titleMatch) partialArgs.title = titleMatch[1];
+            if (acc.extractedPath) partialArgs.path = acc.extractedPath;
+            if (acc.extractedTitle) partialArgs.title = acc.extractedTitle;
+            partialArgs._contentLength = acc.arguments.length;
             yield {
               type: 'tool_call',
               toolCall: { id: acc.id, name: acc.name, arguments: partialArgs }

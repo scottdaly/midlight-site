@@ -314,6 +314,9 @@ export async function* chatWithToolsStream({
   let completionTokens = 0;
   let currentToolCall = null;
   let currentToolInput = '';
+  let extractedPath = null;
+  let extractedTitle = null;
+  let lastProgressAt = 0;
 
   for await (const event of stream) {
     if (event.type === 'message_start' && event.message?.usage) {
@@ -327,6 +330,9 @@ export async function* chatWithToolsStream({
           name: event.content_block.name,
         };
         currentToolInput = '';
+        extractedPath = null;
+        extractedTitle = null;
+        lastProgressAt = 0;
         // Emit early notification so frontend can show "Creating document..." immediately
         yield {
           type: 'tool_call',
@@ -342,6 +348,32 @@ export async function* chatWithToolsStream({
         yield { type: 'thinking', thinking: event.delta.thinking };
       } else if (event.delta.type === 'input_json_delta' && currentToolCall) {
         currentToolInput += event.delta.partial_json;
+
+        // Periodically extract metadata and send progress updates
+        if (currentToolInput.length > 20) {
+          if (!extractedPath) {
+            const pathMatch = currentToolInput.match(/"path"\s*:\s*"([^"]+)"/);
+            if (pathMatch) extractedPath = pathMatch[1];
+          }
+          if (!extractedTitle) {
+            const titleMatch = currentToolInput.match(/"title"\s*:\s*"([^"]+)"/);
+            if (titleMatch) extractedTitle = titleMatch[1];
+          }
+
+          const hasNewMeta = (extractedPath || extractedTitle) && lastProgressAt === 0;
+          const hasProgress = currentToolInput.length - lastProgressAt >= 2000;
+          if (hasNewMeta || hasProgress) {
+            lastProgressAt = currentToolInput.length;
+            const partialArgs = {};
+            if (extractedPath) partialArgs.path = extractedPath;
+            if (extractedTitle) partialArgs.title = extractedTitle;
+            partialArgs._contentLength = currentToolInput.length;
+            yield {
+              type: 'tool_call',
+              toolCall: { id: currentToolCall.id, name: currentToolCall.name, arguments: partialArgs }
+            };
+          }
+        }
       }
     }
 
