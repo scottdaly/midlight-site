@@ -434,12 +434,12 @@ export async function* chatWithToolsStream({
             }
           }
 
-          // Send update when title/path first found, or periodically every ~2000 chars,
-          // or when content preview has grown by ~300 chars
+          // Send update when title/path first found, periodically every ~2000 chars,
+          // or when content preview has grown by ~50 chars (~0.5s at typical speed)
           const hasNewMeta = (acc.extractedPath || acc.extractedTitle) && acc.lastProgressAt === 0;
           const hasProgress = acc.arguments.length - acc.lastProgressAt >= 2000;
           const hasContentPreview = acc.contentValueStart !== undefined &&
-            acc.arguments.length - acc.contentValueStart > (acc.lastPreviewLength || 0) + 300;
+            acc.arguments.length - acc.contentValueStart > (acc.lastPreviewLength || 0) + 50;
           if (hasNewMeta || hasProgress || hasContentPreview) {
             acc.lastProgressAt = acc.arguments.length;
             const partialArgs = {};

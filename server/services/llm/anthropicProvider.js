@@ -376,7 +376,7 @@ export async function* chatWithToolsStream({
           const hasNewMeta = (extractedPath || extractedTitle) && lastProgressAt === 0;
           const hasProgress = currentToolInput.length - lastProgressAt >= 2000;
           const hasContentPreview = contentValueStart !== undefined &&
-            currentToolInput.length - contentValueStart > (lastPreviewLength || 0) + 300;
+            currentToolInput.length - contentValueStart > (lastPreviewLength || 0) + 50;
           if (hasNewMeta || hasProgress || hasContentPreview) {
             lastProgressAt = currentToolInput.length;
             const partialArgs = {};

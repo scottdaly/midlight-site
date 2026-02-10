@@ -88,6 +88,7 @@ router.post('/chat', chatValidation, async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+      res.flushHeaders();
 
       try {
         const streamResponse = await chat({
@@ -210,6 +211,7 @@ router.post('/chat-with-tools', [
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
 
       try {
         const reqStart = Date.now();
