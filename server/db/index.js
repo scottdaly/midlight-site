@@ -329,6 +329,57 @@ function runMigrations() {
         console.log('Migration: Created RAG tables (rag_chunks, rag_chunks_fts, rag_indexed_documents)');
       }
     },
+    // Add prompt_variant to llm_usage table (A/B testing)
+    {
+      name: 'add_prompt_variant_to_llm_usage',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage)").all();
+        return cols.some(c => c.name === 'prompt_variant');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage ADD COLUMN prompt_variant TEXT");
+        console.log('Migration: Added prompt_variant to llm_usage table');
+      }
+    },
+    // Create prompt_variants and user_variant_assignments tables (A/B testing)
+    {
+      name: 'create_prompt_ab_tables',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_variants'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS prompt_variants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_name TEXT NOT NULL,
+            section_name TEXT NOT NULL,
+            variant_key TEXT NOT NULL,
+            text TEXT NOT NULL,
+            version TEXT NOT NULL,
+            weight INTEGER NOT NULL DEFAULT 50,
+            is_active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(experiment_name, variant_key)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_prompt_variants_experiment ON prompt_variants(experiment_name, is_active);
+
+          CREATE TABLE IF NOT EXISTS user_variant_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            experiment_name TEXT NOT NULL,
+            variant_key TEXT NOT NULL,
+            assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, experiment_name)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_user_variant_assignments_user ON user_variant_assignments(user_id);
+        `);
+        console.log('Migration: Created prompt A/B testing tables');
+      }
+    },
   ];
 
   for (const migration of migrations) {

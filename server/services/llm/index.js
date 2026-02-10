@@ -115,7 +115,8 @@ export async function chat({
   webSearchEnabled = false,
   userTier = 'free',
   effortLane = null,
-  promptVersion = null
+  promptVersion = null,
+  promptVariant = null
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -153,7 +154,8 @@ export async function chat({
       requestType,
       providerService,
       effortLane,
-      promptVersion
+      promptVersion,
+      promptVariant
     });
   }
 
@@ -166,7 +168,7 @@ export async function chat({
   });
 
   // Track usage
-  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
+  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion, promptVariant);
 
   return response;
 }
@@ -181,7 +183,8 @@ async function* streamWithTracking({
   requestType,
   providerService,
   effortLane = null,
-  promptVersion = null
+  promptVersion = null,
+  promptVariant = null
 }) {
   const stream = await providerService.chat({
     model,
@@ -202,7 +205,7 @@ async function* streamWithTracking({
 
   // Track usage after stream completes
   if (finalUsage) {
-    await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion);
+    await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion, promptVariant);
   }
 }
 
@@ -221,7 +224,8 @@ export async function chatWithTools({
   webSearchEnabled = false,
   userTier = 'free',
   effortLane = null,
-  promptVersion = null
+  promptVersion = null,
+  promptVariant = null
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -258,7 +262,7 @@ export async function chatWithTools({
   });
 
   // Track LLM usage
-  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
+  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion, promptVariant);
 
   // Format web searches for response (matching existing format)
   const webSearches = searchResult?.searchExecuted && searchResult.results?.length > 0
@@ -299,7 +303,8 @@ export async function chatWithToolsStream({
   webSearchEnabled = false,
   userTier = 'free',
   effortLane = null,
-  promptVersion = null
+  promptVersion = null,
+  promptVariant = null
 }) {
   const t0 = Date.now();
 
@@ -353,7 +358,7 @@ export async function chatWithToolsStream({
       }
       yield { type: 'done', finishReason: response.finishReason, usage: response.usage };
     }
-    await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
+    await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion, promptVariant);
     return { stream: nonStreamingFallback(), sources };
   }
 
@@ -376,7 +381,7 @@ export async function chatWithToolsStream({
       yield chunk;
     }
     if (finalUsage) {
-      await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion);
+      await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion, promptVariant);
     }
   }
 

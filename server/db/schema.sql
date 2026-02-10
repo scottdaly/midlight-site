@@ -599,3 +599,32 @@ CREATE TABLE IF NOT EXISTS rag_indexed_documents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rag_indexed_documents_user ON rag_indexed_documents(user_id);
+
+-- Prompt A/B Testing Variants
+CREATE TABLE IF NOT EXISTS prompt_variants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_name TEXT NOT NULL,
+  section_name TEXT NOT NULL,
+  variant_key TEXT NOT NULL,
+  text TEXT NOT NULL,
+  version TEXT NOT NULL,
+  weight INTEGER NOT NULL DEFAULT 50,
+  is_active INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(experiment_name, variant_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_variants_experiment ON prompt_variants(experiment_name, is_active);
+
+-- Prompt A/B Testing User Assignments
+CREATE TABLE IF NOT EXISTS user_variant_assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  experiment_name TEXT NOT NULL,
+  variant_key TEXT NOT NULL,
+  assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, experiment_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_variant_assignments_user ON user_variant_assignments(user_id);
