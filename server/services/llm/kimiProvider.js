@@ -397,7 +397,7 @@ export async function* chatWithToolsStream({
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0;
         if (!toolCallAccumulators.has(idx)) {
-          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false, extractedPath: null, extractedTitle: null, lastProgressAt: 0 });
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '', notified: false, extractedPath: null, extractedTitle: null, lastProgressAt: 0, contentValueStart: undefined, lastPreviewLength: 0 });
         }
         const acc = toolCallAccumulators.get(idx);
         if (tc.id) acc.id = tc.id;
@@ -425,15 +425,40 @@ export async function* chatWithToolsStream({
             if (titleMatch) acc.extractedTitle = titleMatch[1];
           }
 
-          // Send update when title/path first found, or periodically every ~2000 chars
+          // Track content field start position for live preview
+          if (acc.contentValueStart === undefined) {
+            const contentMatch = acc.arguments.match(/"content"\s*:\s*"/);
+            if (contentMatch) {
+              acc.contentValueStart = contentMatch.index + contentMatch[0].length;
+              acc.lastPreviewLength = 0;
+            }
+          }
+
+          // Send update when title/path first found, or periodically every ~2000 chars,
+          // or when content preview has grown by ~300 chars
           const hasNewMeta = (acc.extractedPath || acc.extractedTitle) && acc.lastProgressAt === 0;
           const hasProgress = acc.arguments.length - acc.lastProgressAt >= 2000;
-          if (hasNewMeta || hasProgress) {
+          const hasContentPreview = acc.contentValueStart !== undefined &&
+            acc.arguments.length - acc.contentValueStart > (acc.lastPreviewLength || 0) + 300;
+          if (hasNewMeta || hasProgress || hasContentPreview) {
             acc.lastProgressAt = acc.arguments.length;
             const partialArgs = {};
             if (acc.extractedPath) partialArgs.path = acc.extractedPath;
             if (acc.extractedTitle) partialArgs.title = acc.extractedTitle;
             partialArgs._contentLength = acc.arguments.length;
+
+            // Extract and include content preview
+            if (acc.contentValueStart !== undefined) {
+              const rawSlice = acc.arguments.substring(acc.contentValueStart);
+              const preview = rawSlice
+                .replace(/\\n/g, '\n')
+                .replace(/\\t/g, '\t')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+              partialArgs._contentPreview = preview;
+              acc.lastPreviewLength = rawSlice.length;
+            }
+
             yield {
               type: 'tool_call',
               toolCall: { id: acc.id, name: acc.name, arguments: partialArgs }

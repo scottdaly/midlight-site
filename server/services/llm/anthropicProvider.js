@@ -317,6 +317,8 @@ export async function* chatWithToolsStream({
   let extractedPath = null;
   let extractedTitle = null;
   let lastProgressAt = 0;
+  let contentValueStart = undefined;
+  let lastPreviewLength = 0;
 
   for await (const event of stream) {
     if (event.type === 'message_start' && event.message?.usage) {
@@ -333,6 +335,8 @@ export async function* chatWithToolsStream({
         extractedPath = null;
         extractedTitle = null;
         lastProgressAt = 0;
+        contentValueStart = undefined;
+        lastPreviewLength = 0;
         // Emit early notification so frontend can show "Creating document..." immediately
         yield {
           type: 'tool_call',
@@ -360,14 +364,38 @@ export async function* chatWithToolsStream({
             if (titleMatch) extractedTitle = titleMatch[1];
           }
 
+          // Track content field start position for live preview
+          if (contentValueStart === undefined) {
+            const contentMatch = currentToolInput.match(/"content"\s*:\s*"/);
+            if (contentMatch) {
+              contentValueStart = contentMatch.index + contentMatch[0].length;
+              lastPreviewLength = 0;
+            }
+          }
+
           const hasNewMeta = (extractedPath || extractedTitle) && lastProgressAt === 0;
           const hasProgress = currentToolInput.length - lastProgressAt >= 2000;
-          if (hasNewMeta || hasProgress) {
+          const hasContentPreview = contentValueStart !== undefined &&
+            currentToolInput.length - contentValueStart > (lastPreviewLength || 0) + 300;
+          if (hasNewMeta || hasProgress || hasContentPreview) {
             lastProgressAt = currentToolInput.length;
             const partialArgs = {};
             if (extractedPath) partialArgs.path = extractedPath;
             if (extractedTitle) partialArgs.title = extractedTitle;
             partialArgs._contentLength = currentToolInput.length;
+
+            // Extract and include content preview
+            if (contentValueStart !== undefined) {
+              const rawSlice = currentToolInput.substring(contentValueStart);
+              const preview = rawSlice
+                .replace(/\\n/g, '\n')
+                .replace(/\\t/g, '\t')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+              partialArgs._contentPreview = preview;
+              lastPreviewLength = rawSlice.length;
+            }
+
             yield {
               type: 'tool_call',
               toolCall: { id: currentToolCall.id, name: currentToolCall.name, arguments: partialArgs }
