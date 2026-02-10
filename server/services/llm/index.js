@@ -114,7 +114,8 @@ export async function chat({
   requestType = 'chat',
   webSearchEnabled = false,
   userTier = 'free',
-  effortLane = null
+  effortLane = null,
+  promptVersion = null
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -151,7 +152,8 @@ export async function chat({
       maxTokens,
       requestType,
       providerService,
-      effortLane
+      effortLane,
+      promptVersion
     });
   }
 
@@ -164,7 +166,7 @@ export async function chat({
   });
 
   // Track usage
-  await trackUsage(userId, provider, model, response.usage, requestType, effortLane);
+  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
 
   return response;
 }
@@ -178,7 +180,8 @@ async function* streamWithTracking({
   maxTokens,
   requestType,
   providerService,
-  effortLane = null
+  effortLane = null,
+  promptVersion = null
 }) {
   const stream = await providerService.chat({
     model,
@@ -199,7 +202,7 @@ async function* streamWithTracking({
 
   // Track usage after stream completes
   if (finalUsage) {
-    await trackUsage(userId, provider, model, finalUsage, requestType, effortLane);
+    await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion);
   }
 }
 
@@ -217,7 +220,8 @@ export async function chatWithTools({
   requestType = 'agent',
   webSearchEnabled = false,
   userTier = 'free',
-  effortLane = null
+  effortLane = null,
+  promptVersion = null
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -254,7 +258,7 @@ export async function chatWithTools({
   });
 
   // Track LLM usage
-  await trackUsage(userId, provider, model, response.usage, requestType, effortLane);
+  await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
 
   // Format web searches for response (matching existing format)
   const webSearches = searchResult?.searchExecuted && searchResult.results?.length > 0
@@ -294,7 +298,8 @@ export async function chatWithToolsStream({
   requestType = 'agent',
   webSearchEnabled = false,
   userTier = 'free',
-  effortLane = null
+  effortLane = null,
+  promptVersion = null
 }) {
   const t0 = Date.now();
 
@@ -348,7 +353,7 @@ export async function chatWithToolsStream({
       }
       yield { type: 'done', finishReason: response.finishReason, usage: response.usage };
     }
-    await trackUsage(userId, provider, model, response.usage, requestType, effortLane);
+    await trackUsage(userId, provider, model, response.usage, requestType, effortLane, promptVersion);
     return { stream: nonStreamingFallback(), sources };
   }
 
@@ -371,7 +376,7 @@ export async function chatWithToolsStream({
       yield chunk;
     }
     if (finalUsage) {
-      await trackUsage(userId, provider, model, finalUsage, requestType, effortLane);
+      await trackUsage(userId, provider, model, finalUsage, requestType, effortLane, promptVersion);
     }
   }
 

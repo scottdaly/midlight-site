@@ -270,6 +270,18 @@ function runMigrations() {
         console.log('Migration: Added effort_lane to llm_usage table');
       }
     },
+    // Add prompt_version to llm_usage table
+    {
+      name: 'add_prompt_version_to_llm_usage',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(llm_usage)").all();
+        return cols.some(c => c.name === 'prompt_version');
+      },
+      run: () => {
+        db.exec("ALTER TABLE llm_usage ADD COLUMN prompt_version TEXT");
+        console.log('Migration: Added prompt_version to llm_usage table');
+      }
+    },
     // Create RAG tables for web semantic search
     {
       name: 'create_rag_tables',

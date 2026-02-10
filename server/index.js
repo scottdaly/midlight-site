@@ -20,6 +20,7 @@ import adminRouter from './routes/admin/index.js';
 import syncRouter from './routes/sync.js';
 import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
+import promptsRouter from './routes/prompts.js';
 import { configurePassport } from './config/passport.js';
 import { cleanupExpiredSessions, cleanupExpiredOAuthStates, cleanupExpiredCodes, cleanupExpiredPasswordResetTokens, cleanupExpiredEmailVerificationTokens } from './services/tokenService.js';
 import { cleanupOldAuthEvents } from './services/auditService.js';
@@ -267,6 +268,7 @@ app.use('/api/subscription', subscriptionRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/marketplace', marketplaceRouter);
 app.use('/api/rag', ragRouter);
+app.use('/api/prompts', promptsRouter);
 app.use('/api/admin', adminRouter);
 
 // Health check endpoints (no auth required)
