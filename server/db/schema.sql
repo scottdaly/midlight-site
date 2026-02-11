@@ -359,6 +359,36 @@ CREATE TABLE IF NOT EXISTS sync_conflict_content (
   PRIMARY KEY (user_id, document_id, version)
 );
 
+-- Sync Versions (synced save points / bookmarks)
+CREATE TABLE IF NOT EXISTS sync_versions (
+  id TEXT PRIMARY KEY,                       -- Client-generated checkpoint ID (dedup key)
+  document_id TEXT NOT NULL,                 -- References sync_documents.id
+  user_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  description TEXT,
+  content_hash TEXT NOT NULL,
+  sidecar_hash TEXT,
+  summary TEXT,
+  stats_json TEXT,                           -- JSON: { wordCount, charCount, changeSize }
+  size_bytes INTEGER DEFAULT 0,             -- Content size for quota tracking
+  created_at DATETIME NOT NULL,             -- Original client timestamp
+  uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_versions_document ON sync_versions(document_id);
+CREATE INDEX IF NOT EXISTS idx_sync_versions_user ON sync_versions(user_id);
+
+-- Sync Version Content (SQLite fallback when R2 is not configured)
+CREATE TABLE IF NOT EXISTS sync_version_content (
+  version_id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  content TEXT NOT NULL,                     -- Full document snapshot (markdown)
+  sidecar TEXT,                              -- Sidecar JSON string
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_version_content_user ON sync_version_content(user_id);
+
 -- Sync Operations Log (for debugging and analytics)
 CREATE TABLE IF NOT EXISTS sync_operations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

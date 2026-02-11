@@ -782,6 +782,296 @@ router.get('/conflicts/:id', [param('id').isUUID()], async (req, res) => {
   }
 });
 
+// ============================================================================
+// VERSION SYNC ENDPOINTS (save points / bookmarks)
+// ============================================================================
+
+// GET /api/sync/versions - List synced versions for a document
+router.get(
+  '/versions',
+  [query('documentId').isString().notEmpty().withMessage('documentId is required')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const userId = req.user.id;
+      const { documentId, since } = req.query;
+
+      // Verify document belongs to user
+      const doc = db
+        .prepare('SELECT id FROM sync_documents WHERE id = ? AND user_id = ?')
+        .get(documentId, userId);
+
+      if (!doc) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
+
+      let versions;
+      if (since) {
+        versions = db
+          .prepare(`
+            SELECT id, document_id, label, description, content_hash, sidecar_hash,
+                   summary, stats_json, size_bytes, created_at, uploaded_at
+            FROM sync_versions
+            WHERE document_id = ? AND user_id = ? AND uploaded_at > ?
+            ORDER BY created_at DESC
+          `)
+          .all(documentId, userId, since);
+      } else {
+        versions = db
+          .prepare(`
+            SELECT id, document_id, label, description, content_hash, sidecar_hash,
+                   summary, stats_json, size_bytes, created_at, uploaded_at
+            FROM sync_versions
+            WHERE document_id = ? AND user_id = ?
+            ORDER BY created_at DESC
+          `)
+          .all(documentId, userId);
+      }
+
+      res.json({
+        versions: versions.map((v) => ({
+          id: v.id,
+          documentId: v.document_id,
+          label: v.label,
+          description: v.description,
+          contentHash: v.content_hash,
+          sidecarHash: v.sidecar_hash,
+          summary: v.summary,
+          stats: v.stats_json ? (() => { try { return JSON.parse(v.stats_json); } catch { return null; } })() : null,
+          sizeBytes: v.size_bytes,
+          createdAt: v.created_at,
+          uploadedAt: v.uploaded_at,
+        })),
+        documentId,
+      });
+    } catch (error) {
+      logger.error({ error: error?.message || error, userId: req.user.id }, 'List versions error');
+      res.status(500).json({ error: 'Failed to list versions' });
+    }
+  }
+);
+
+// POST /api/sync/versions - Upload a save point (idempotent)
+router.post(
+  '/versions',
+  [
+    body('id').isString().trim().notEmpty().withMessage('Version ID is required'),
+    body('documentId').isString().trim().notEmpty().withMessage('Document ID is required'),
+    body('label').isString().trim().notEmpty().withMessage('Label is required'),
+    body('description').optional({ nullable: true }).isString(),
+    body('contentHash').isString().notEmpty(),
+    body('content').isString(),
+    body('sidecar').optional({ nullable: true }).isString(),
+    body('summary').optional({ nullable: true }).isString(),
+    body('stats').optional({ nullable: true }).isObject(),
+    body('createdAt').isISO8601().withMessage('createdAt must be ISO8601'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const userId = req.user.id;
+      const tier = req.subscription?.tier || 'free';
+      const {
+        id: versionId,
+        documentId,
+        label,
+        description,
+        contentHash,
+        content,
+        sidecar,
+        summary,
+        stats,
+        createdAt,
+      } = req.body;
+
+      // 1. Check if version already exists (idempotent)
+      const existing = db
+        .prepare('SELECT id FROM sync_versions WHERE id = ? AND user_id = ?')
+        .get(versionId, userId);
+
+      if (existing) {
+        return res.json({ success: true, alreadyExists: true });
+      }
+
+      // 2. Validate document belongs to user
+      const doc = db
+        .prepare('SELECT id FROM sync_documents WHERE id = ? AND user_id = ?')
+        .get(documentId, userId);
+
+      if (!doc) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
+
+      // 3. Calculate content size
+      const contentSize = Buffer.byteLength(content, 'utf-8');
+      const sidecarSize = sidecar ? Buffer.byteLength(sidecar, 'utf-8') : 0;
+      const totalSize = contentSize + sidecarSize;
+
+      // 4. Check storage quota (versions don't count toward document limit)
+      const storageCheck = checkStorageLimit(userId, tier, totalSize, false);
+      if (!storageCheck.allowed) {
+        return res.status(413).json({
+          error: 'Storage quota exceeded',
+          usage: {
+            current: storageCheck.currentUsage,
+            limit: storageCheck.limit,
+            required: totalSize,
+          },
+        });
+      }
+
+      // 5. Upload content via storage service
+      await storage.uploadVersionContent(userId, versionId, content, sidecar || null);
+
+      // 6. Insert version metadata
+      const sidecarHash = sidecar ? storage.hashContent(sidecar) : null;
+      const statsJson = stats ? JSON.stringify(stats) : null;
+
+      db.prepare(`
+        INSERT INTO sync_versions (id, document_id, user_id, label, description, content_hash,
+          sidecar_hash, summary, stats_json, size_bytes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        versionId,
+        documentId,
+        userId,
+        label,
+        description || null,
+        contentHash,
+        sidecarHash,
+        summary || null,
+        statsJson,
+        totalSize,
+        createdAt
+      );
+
+      // 7. Update sync usage
+      updateSyncUsage(userId, totalSize);
+
+      // 8. Log operation
+      logSyncOperation(userId, documentId, 'version_upload', null, totalSize, true);
+
+      res.json({
+        success: true,
+        version: {
+          id: versionId,
+          documentId,
+          label,
+          description: description || null,
+          contentHash,
+          sidecarHash,
+          summary: summary || null,
+          stats: stats || null,
+          sizeBytes: totalSize,
+          createdAt,
+        },
+      });
+    } catch (error) {
+      logger.error({ error: error?.message || error, stack: error?.stack, userId: req.user.id }, 'Upload version error');
+      res.status(500).json({ error: 'Failed to upload version' });
+    }
+  }
+);
+
+// GET /api/sync/versions/:id/content - Download version content
+router.get(
+  '/versions/:id/content',
+  [param('id').isString().notEmpty()],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const userId = req.user.id;
+      const { id: versionId } = req.params;
+
+      // Verify version belongs to user
+      const version = db
+        .prepare('SELECT id, content_hash FROM sync_versions WHERE id = ? AND user_id = ?')
+        .get(versionId, userId);
+
+      if (!version) {
+        return res.status(404).json({ error: 'Version not found' });
+      }
+
+      // Download content
+      const result = await storage.downloadVersionContent(userId, versionId);
+
+      if (!result) {
+        return res.status(404).json({ error: 'Version content not found' });
+      }
+
+      res.json({
+        id: versionId,
+        content: result.content,
+        sidecar: result.sidecar,
+        contentHash: version.content_hash,
+      });
+    } catch (error) {
+      logger.error({ error: error?.message || error, userId: req.user.id }, 'Download version content error');
+      res.status(500).json({ error: 'Failed to download version content' });
+    }
+  }
+);
+
+// DELETE /api/sync/versions/:id - Delete a synced version
+router.delete(
+  '/versions/:id',
+  [param('id').isString().notEmpty()],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const userId = req.user.id;
+      const { id: versionId } = req.params;
+
+      // Verify version belongs to user and get size for quota update
+      const version = db
+        .prepare('SELECT id, size_bytes FROM sync_versions WHERE id = ? AND user_id = ?')
+        .get(versionId, userId);
+
+      if (!version) {
+        return res.status(404).json({ error: 'Version not found' });
+      }
+
+      // Get document ID for logging
+      const versionMeta = db
+        .prepare('SELECT document_id FROM sync_versions WHERE id = ? AND user_id = ?')
+        .get(versionId, userId);
+
+      // Delete content from storage
+      await storage.deleteVersionContent(userId, versionId);
+
+      // Delete metadata
+      db.prepare('DELETE FROM sync_versions WHERE id = ? AND user_id = ?').run(versionId, userId);
+
+      // Update sync usage
+      updateSyncUsage(userId, -(version.size_bytes || 0));
+
+      // Log operation
+      logSyncOperation(userId, versionMeta?.document_id || null, 'version_delete', null, version.size_bytes || 0, true);
+
+      res.json({ success: true });
+    } catch (error) {
+      logger.error({ error: error?.message || error, userId: req.user.id }, 'Delete version error');
+      res.status(500).json({ error: 'Failed to delete version' });
+    }
+  }
+);
+
 // GET /api/sync/usage - Get storage usage
 router.get('/usage', (req, res) => {
   try {

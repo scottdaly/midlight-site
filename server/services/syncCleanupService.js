@@ -37,6 +37,28 @@ async function cleanupExpiredDocuments() {
       // Delete storage objects (R2 or SQLite content)
       await storage.deleteDocumentObjects(doc.user_id, doc.id);
 
+      // Clean up associated versions and their content
+      const versions = db.prepare('SELECT id, size_bytes FROM sync_versions WHERE document_id = ? AND user_id = ?').all(doc.id, doc.user_id);
+      let versionSizeTotal = 0;
+      for (const ver of versions) {
+        versionSizeTotal += ver.size_bytes || 0;
+        try {
+          await storage.deleteVersionContent(doc.user_id, ver.id);
+        } catch (verErr) {
+          logger.error({ error: verErr?.message || verErr, versionId: ver.id }, 'Failed to cleanup version content');
+        }
+      }
+      db.prepare('DELETE FROM sync_version_content WHERE version_id IN (SELECT id FROM sync_versions WHERE document_id = ? AND user_id = ?)').run(doc.id, doc.user_id);
+      db.prepare('DELETE FROM sync_versions WHERE document_id = ? AND user_id = ?').run(doc.id, doc.user_id);
+
+      // Decrement sync usage for deleted version bytes
+      if (versionSizeTotal > 0) {
+        db.prepare(`
+          UPDATE sync_usage SET total_size_bytes = MAX(0, total_size_bytes - ?), updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+        `).run(versionSizeTotal, doc.user_id);
+      }
+
       // Hard-delete DB rows (content table cleaned by CASCADE or explicit delete)
       db.prepare('DELETE FROM sync_document_content WHERE document_id = ? AND user_id = ?').run(doc.id, doc.user_id);
       db.prepare('DELETE FROM sync_documents WHERE id = ?').run(doc.id);

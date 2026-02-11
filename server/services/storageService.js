@@ -193,6 +193,41 @@ function sqliteGetUserStorageUsage(userId) {
 }
 
 // ============================================================================
+// SQLite Fallback — Version Content (save points / bookmarks)
+// ============================================================================
+
+function sqliteUploadVersionContent(userId, versionId, content, sidecar) {
+  db.prepare(`
+    INSERT INTO sync_version_content (version_id, user_id, content, sidecar, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(version_id) DO UPDATE SET
+      content = excluded.content,
+      sidecar = excluded.sidecar,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(versionId, userId, content, sidecar || null);
+}
+
+function sqliteDownloadVersionContent(userId, versionId) {
+  const row = db.prepare(
+    'SELECT content, sidecar FROM sync_version_content WHERE version_id = ? AND user_id = ?'
+  ).get(versionId, userId);
+
+  if (!row) return null;
+
+  return {
+    content: row.content,
+    sidecar: row.sidecar || null,
+    contentHash: hashContent(row.content),
+  };
+}
+
+function sqliteDeleteVersionContent(userId, versionId) {
+  db.prepare(
+    'DELETE FROM sync_version_content WHERE version_id = ? AND user_id = ?'
+  ).run(versionId, userId);
+}
+
+// ============================================================================
 // Public API (dispatches to R2 or SQLite)
 // ============================================================================
 
@@ -568,6 +603,122 @@ export function isStorageAvailable() {
   return true;
 }
 
+// ============================================================================
+// Version Content API (save points / bookmarks)
+// ============================================================================
+
+/**
+ * Upload version content (save point snapshot)
+ */
+export async function uploadVersionContent(userId, versionId, content, sidecar) {
+  if (!isR2Configured) {
+    sqliteUploadVersionContent(userId, versionId, content, sidecar);
+    return;
+  }
+
+  const contentKey = `users/${userId}/versions/${versionId}/content`;
+  const contentBuffer = Buffer.from(content, 'utf-8');
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: contentKey,
+      Body: contentBuffer,
+      ContentType: 'text/plain',
+      Metadata: {
+        'user-id': String(userId),
+        'version-id': versionId,
+      },
+    })
+  );
+
+  if (sidecar) {
+    const sidecarKey = `users/${userId}/versions/${versionId}/sidecar.json`;
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: sidecarKey,
+        Body: Buffer.from(sidecar, 'utf-8'),
+        ContentType: 'application/json',
+      })
+    );
+  }
+}
+
+/**
+ * Download version content
+ */
+export async function downloadVersionContent(userId, versionId) {
+  if (!isR2Configured) {
+    return sqliteDownloadVersionContent(userId, versionId);
+  }
+
+  const contentKey = `users/${userId}/versions/${versionId}/content`;
+
+  try {
+    const contentResponse = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: contentKey,
+      })
+    );
+    const content = await contentResponse.Body.transformToString();
+
+    // Try to get sidecar (optional)
+    let sidecar = null;
+    try {
+      const sidecarKey = `users/${userId}/versions/${versionId}/sidecar.json`;
+      const sidecarResponse = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: R2_BUCKET_NAME,
+          Key: sidecarKey,
+        })
+      );
+      sidecar = await sidecarResponse.Body.transformToString();
+    } catch (err) {
+      if (err.name !== 'NoSuchKey') throw err;
+    }
+
+    return {
+      content,
+      sidecar,
+      contentHash: hashContent(content),
+    };
+  } catch (error) {
+    if (error.name === 'NoSuchKey') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Delete version content
+ */
+export async function deleteVersionContent(userId, versionId) {
+  if (!isR2Configured) {
+    return sqliteDeleteVersionContent(userId, versionId);
+  }
+
+  const contentKey = `users/${userId}/versions/${versionId}/content`;
+  const sidecarKey = `users/${userId}/versions/${versionId}/sidecar.json`;
+
+  await Promise.allSettled([
+    s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: contentKey,
+      })
+    ),
+    s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: sidecarKey,
+      })
+    ),
+  ]);
+}
+
 export default {
   uploadDocument,
   downloadDocument,
@@ -582,4 +733,7 @@ export default {
   getDownloadUrl,
   isStorageAvailable,
   hashContent,
+  uploadVersionContent,
+  downloadVersionContent,
+  deleteVersionContent,
 };

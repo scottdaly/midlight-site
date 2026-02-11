@@ -341,6 +341,46 @@ function runMigrations() {
         console.log('Migration: Added prompt_variant to llm_usage table');
       }
     },
+    // Create sync_versions and sync_version_content tables (version/bookmark sync)
+    {
+      name: 'create_sync_version_tables',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_versions'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS sync_versions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            description TEXT,
+            content_hash TEXT NOT NULL,
+            sidecar_hash TEXT,
+            summary TEXT,
+            stats_json TEXT,
+            size_bytes INTEGER DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_sync_versions_document ON sync_versions(document_id);
+          CREATE INDEX IF NOT EXISTS idx_sync_versions_user ON sync_versions(user_id);
+
+          CREATE TABLE IF NOT EXISTS sync_version_content (
+            version_id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            sidecar TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_sync_version_content_user ON sync_version_content(user_id);
+        `);
+        console.log('Migration: Created sync_versions and sync_version_content tables');
+      }
+    },
     // Create prompt_variants and user_variant_assignments tables (A/B testing)
     {
       name: 'create_prompt_ab_tables',
