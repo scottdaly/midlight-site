@@ -215,7 +215,7 @@ router.post('/chat-with-tools', [
 
       try {
         const reqStart = Date.now();
-        console.log(`[LLM Route] chat-with-tools stream request: provider=${provider}, model=${model}`);
+        logger.debug({ provider, model }, 'chat-with-tools stream request');
         const streamResult = await chatWithToolsStream({
           userId: req.user.id,
           provider,
@@ -230,12 +230,12 @@ router.post('/chat-with-tools', [
           promptVersion,
           promptVariant
         });
-        console.log(`[LLM Route] Stream setup complete: ${Date.now() - reqStart}ms`);
+        logger.debug({ durationMs: Date.now() - reqStart }, 'Stream setup complete');
 
         let firstChunkSent = false;
         for await (const chunk of streamResult.stream) {
           if (!firstChunkSent) {
-            console.log(`[LLM Route] First chunk to client: ${Date.now() - reqStart}ms (type: ${chunk.type})`);
+            logger.debug({ durationMs: Date.now() - reqStart, type: chunk.type }, 'First chunk to client');
             firstChunkSent = true;
           }
           if (chunk.type === 'content') {
@@ -296,7 +296,7 @@ router.post('/chat-with-tools', [
       });
     }
 
-    res.status(500).json({ error: error.message || 'Chat with tools failed' });
+    res.status(500).json({ error: 'Chat with tools failed' });
   }
 });
 
@@ -411,11 +411,17 @@ function getCachedPage(url) {
 
 function setCachedPage(url, data) {
   pageCache.set(url, { data, timestamp: Date.now() });
-  // Evict old entries if cache grows too large
+  // Evict expired entries, then oldest if still over limit
   if (pageCache.size > 200) {
     const now = Date.now();
     for (const [key, val] of pageCache) {
       if (now - val.timestamp > PAGE_CACHE_TTL_MS) pageCache.delete(key);
+    }
+    // If still over limit after removing expired, remove oldest entries
+    if (pageCache.size > 200) {
+      const entries = [...pageCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp);
+      const toRemove = entries.slice(0, pageCache.size - 200);
+      for (const [key] of toRemove) pageCache.delete(key);
     }
   }
 }

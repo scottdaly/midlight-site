@@ -133,8 +133,10 @@ router.post('/error-report', (req, res) => {
 // Protected by Basic Auth (middleware applied in main server file or here)
 router.get('/admin/errors', (req, res) => {
   try {
-    const { limit = 100, offset = 0, category } = req.query;
-    
+    const { category } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 100, 200);
+    const offset = parseInt(req.query.offset) || 0;
+
     let query = 'SELECT * FROM error_reports';
     const params = [];
 
@@ -144,7 +146,7 @@ router.get('/admin/errors', (req, res) => {
     }
 
     query += ' ORDER BY received_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
+    params.push(limit, offset);
 
     const stmt = db.prepare(query);
     const reports = stmt.all(...params);

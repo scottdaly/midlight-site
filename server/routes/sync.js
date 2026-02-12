@@ -130,8 +130,8 @@ router.get('/status', async (req, res) => {
     const userId = req.user.id;
     const tier = req.subscription?.tier || 'free';
 
-    // Optional pagination params
-    const pageLimit = req.query.limit ? parseInt(req.query.limit, 10) : null;
+    // Optional pagination params (capped at 500)
+    const pageLimit = req.query.limit ? Math.min(parseInt(req.query.limit, 10) || 500, 500) : null;
     const cursor = req.query.cursor || null;
 
     // Get documents (with optional pagination)

@@ -1,10 +1,21 @@
 import { Router } from 'express';
 import { body, query, param, validationResult } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import { logger } from '../utils/logger.js';
 import { requireAuth, optionalAuth, attachSubscription, requirePro } from '../middleware/auth.js';
 import * as marketplaceService from '../services/marketplaceService.js';
 
 const router = Router();
+
+// Rate limiter for marketplace write operations
+const marketplaceWriteLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  message: { error: 'Too many marketplace requests, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id?.toString() || req.ip,
+});
 
 // ============================================================================
 // PUBLIC ROUTES (no auth required, but optional auth for personalization)
@@ -125,7 +136,7 @@ router.get('/skills/:id/my-rating', [
 router.post('/skills/:id/install', [
   param('id').isUUID(),
   body('version').optional().matches(/^\d+\.\d+\.\d+$/),
-], requireAuth, attachSubscription, (req, res) => {
+], requireAuth, attachSubscription, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -153,7 +164,7 @@ router.post('/skills/:id/install', [
 // DELETE /api/marketplace/skills/:id/install - Uninstall a skill
 router.delete('/skills/:id/install', [
   param('id').isUUID(),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -200,7 +211,7 @@ router.post('/skills/:id/rate', [
   param('id').isUUID(),
   body('rating').isInt({ min: 1, max: 5 }),
   body('review').optional().trim().isLength({ max: 1000 }),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -231,7 +242,7 @@ router.post('/skills/:id/flag', [
   param('id').isUUID(),
   body('reason').isIn(['spam', 'inappropriate', 'broken', 'other']),
   body('details').optional().trim().isLength({ max: 500 }),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -281,7 +292,7 @@ router.post('/submit', [
   body('supportsChat').optional().isBoolean(),
   body('tags').optional().isArray({ max: 10 }),
   body('tags.*').optional().trim().isLength({ max: 30 }),
-], requireAuth, attachSubscription, requirePro, (req, res) => {
+], requireAuth, attachSubscription, requirePro, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -327,7 +338,7 @@ router.put('/skills/:id', [
   body('supportsChat').optional().isBoolean(),
   body('tags').optional().isArray({ max: 10 }),
   body('changelog').optional().trim().isLength({ max: 500 }),
-], requireAuth, attachSubscription, requirePro, (req, res) => {
+], requireAuth, attachSubscription, requirePro, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -354,7 +365,7 @@ router.put('/skills/:id', [
 // DELETE /api/marketplace/skills/:id - Delete a skill (author only)
 router.delete('/skills/:id', [
   param('id').isUUID(),
-], requireAuth, attachSubscription, requirePro, (req, res) => {
+], requireAuth, attachSubscription, requirePro, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -404,7 +415,7 @@ router.post('/private', [
   body('outputFormat').isIn(['text', 'markdown', 'json', 'replace']),
   body('supportsSelection').optional().isBoolean(),
   body('supportsChat').optional().isBoolean(),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -447,7 +458,7 @@ router.put('/private/:id', [
   body('outputFormat').optional().isIn(['text', 'markdown', 'json', 'replace']),
   body('supportsSelection').optional().isBoolean(),
   body('supportsChat').optional().isBoolean(),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -471,7 +482,7 @@ router.put('/private/:id', [
 // DELETE /api/marketplace/private/:id - Delete a private skill
 router.delete('/private/:id', [
   param('id').isUUID(),
-], requireAuth, (req, res) => {
+], requireAuth, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -494,7 +505,7 @@ router.delete('/private/:id', [
 // POST /api/marketplace/private/:id/publish - Publish private skill to marketplace (Pro only)
 router.post('/private/:id/publish', [
   param('id').isUUID(),
-], requireAuth, attachSubscription, requirePro, (req, res) => {
+], requireAuth, attachSubscription, requirePro, marketplaceWriteLimiter, (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

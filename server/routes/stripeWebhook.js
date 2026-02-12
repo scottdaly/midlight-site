@@ -117,8 +117,8 @@ router.post('/', async (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Error processing webhook');
     // Still return 200 to prevent Stripe from retrying
-    // Log the error for investigation
-    res.json({ received: true, error: error.message });
+    // Error is already logged above for investigation
+    res.json({ received: true });
   }
 });
 

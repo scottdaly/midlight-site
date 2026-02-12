@@ -216,12 +216,18 @@ router.put('/link/:token/content', requireAuth, [
 
     const result = await uploadDocument(share.doc_owner_id, share.document_id, content, sidecar);
 
-    // Update sync_documents metadata
-    db.prepare(`
+    // Update sync_documents metadata with optimistic locking
+    const updateResult = db.prepare(`
       UPDATE sync_documents
       SET content_hash = ?, sidecar_hash = ?, size_bytes = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(result.contentHash, result.sidecarHash, result.sizeBytes, share.document_id);
+      WHERE id = ? AND version = ?
+    `).run(result.contentHash, result.sidecarHash, result.sizeBytes, share.document_id, share.doc_version);
+
+    if (updateResult.changes === 0) {
+      return res.status(409).json({
+        error: 'Document was updated by another user. Reload to see the latest version.',
+      });
+    }
 
     const newVersion = share.doc_version + 1;
     res.json({ success: true, version: newVersion });
