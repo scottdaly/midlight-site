@@ -132,7 +132,6 @@ export const CONFIG = {
   // LLM Provider settings
   llm: {
     defaultProvider: 'anthropic',
-    timeout: 120000, // 2 minutes
     maxRetries: 2,
     providers: {
       anthropic: {
