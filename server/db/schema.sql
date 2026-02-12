@@ -701,6 +701,231 @@ CREATE INDEX IF NOT EXISTS idx_document_access_share ON document_access(share_id
 CREATE INDEX IF NOT EXISTS idx_document_access_user_accepted ON document_access(user_id, accepted_at);
 
 -- ============================================================================
+-- INLINE COMMENTS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS document_comments (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  author_id INTEGER NOT NULL,
+  parent_id TEXT,
+  content TEXT NOT NULL,
+  anchor_from INTEGER,
+  anchor_to INTEGER,
+  anchor_text TEXT,
+  anchor_yjs_from TEXT,
+  anchor_yjs_to TEXT,
+  resolved_at DATETIME,
+  resolved_by INTEGER,
+  edited_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES document_comments(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_comments_document ON document_comments(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_comments_author ON document_comments(author_id);
+CREATE INDEX IF NOT EXISTS idx_document_comments_parent ON document_comments(parent_id);
+
+-- ============================================================================
+-- GUEST SESSIONS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS guest_sessions (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  share_id TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT 'Guest',
+  permission TEXT NOT NULL DEFAULT 'view',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (share_id) REFERENCES document_shares(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_document ON guest_sessions(document_id);
+CREATE INDEX IF NOT EXISTS idx_guest_sessions_expires ON guest_sessions(expires_at);
+
+-- ============================================================================
+-- NOTIFICATIONS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  document_id TEXT,
+  comment_id TEXT,
+  actor_id INTEGER,
+  read_at DATETIME,
+  email_sent_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id INTEGER PRIMARY KEY,
+  email_comments INTEGER DEFAULT 1,
+  email_mentions INTEGER DEFAULT 1,
+  email_suggestions INTEGER DEFAULT 1,
+  email_edits INTEGER DEFAULT 0,
+  email_shares INTEGER DEFAULT 1,
+  in_app_enabled INTEGER DEFAULT 1,
+  digest_frequency TEXT DEFAULT 'instant',
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- SUGGESTIONS (Tracked Changes)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS document_suggestions (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  author_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  anchor_from INTEGER NOT NULL,
+  anchor_to INTEGER NOT NULL,
+  original_text TEXT,
+  suggested_text TEXT,
+  anchor_yjs_from TEXT,
+  anchor_yjs_to TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  resolved_by INTEGER,
+  resolved_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_suggestions_document ON document_suggestions(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_suggestions_status ON document_suggestions(document_id, status);
+
+-- ============================================================================
+-- ACTIVITY FEED
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS document_activity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  metadata TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_activity_document ON document_activity(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_activity_user ON document_activity(user_id);
+CREATE INDEX IF NOT EXISTS idx_document_activity_created ON document_activity(created_at);
+
+-- ============================================================================
+-- TEAM WORKSPACES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT UNIQUE NOT NULL,
+  description TEXT,
+  owner_id INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_id);
+CREATE INDEX IF NOT EXISTS idx_teams_slug ON teams(slug);
+
+CREATE TABLE IF NOT EXISTS team_members (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+CREATE TABLE IF NOT EXISTS team_documents (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  document_id TEXT NOT NULL,
+  added_by INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  UNIQUE(team_id, document_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_documents_team ON team_documents(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_documents_document ON team_documents(document_id);
+
+-- ============================================================================
+-- VERSION BRANCHES
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS document_branches (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  base_version_id TEXT NOT NULL,
+  base_content_hash TEXT NOT NULL,
+  creator_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  merged_at DATETIME,
+  merged_by INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  UNIQUE(document_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_branches_document ON document_branches(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_branches_status ON document_branches(document_id, status);
+
+CREATE TABLE IF NOT EXISTS document_branch_content (
+  branch_id TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  sidecar TEXT NOT NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (branch_id) REFERENCES document_branches(id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- SECTION LOCKS (Granular Permissions)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS document_section_locks (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  heading_text TEXT NOT NULL,
+  heading_level INTEGER NOT NULL,
+  heading_node_id TEXT,
+  locked_by INTEGER NOT NULL,
+  lock_type TEXT NOT NULL DEFAULT 'owner_only',
+  allowed_user_ids TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  UNIQUE(document_id, heading_node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_section_locks_document ON document_section_locks(document_id);
+
+-- ============================================================================
 -- COLLABORATIVE EDITING (Y.js / Hocuspocus)
 -- ============================================================================
 

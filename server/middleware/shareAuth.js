@@ -20,7 +20,18 @@ export function getDocumentPermission(userId, documentId) {
   ).get(documentId, userId);
   if (doc) return 'owner';
 
-  // 2. Check explicit access via document_access
+  // 2. Check team membership (team documents grant role-based access)
+  const teamAccess = db.prepare(`
+    SELECT tm.role FROM team_members tm
+    JOIN team_documents td ON tm.team_id = td.team_id
+    WHERE td.document_id = ? AND tm.user_id = ?
+  `).get(documentId, userId);
+  if (teamAccess) {
+    // owner/admin/member → edit, viewer → view
+    return teamAccess.role === 'viewer' ? 'view' : 'edit';
+  }
+
+  // 3. Check explicit access via document_access
   const access = db.prepare(`
     SELECT da.permission FROM document_access da
     JOIN document_shares ds ON da.share_id = ds.id
@@ -28,7 +39,7 @@ export function getDocumentPermission(userId, documentId) {
   `).get(documentId, userId);
   if (access) return access.permission;
 
-  // 3. Check link-based sharing (any authenticated user gets link_permission)
+  // 4. Check link-based sharing (any authenticated user gets link_permission)
   const share = db.prepare(`
     SELECT link_permission FROM document_shares
     WHERE document_id = ? AND link_enabled = 1
@@ -61,6 +72,19 @@ export function resolveDocumentAccess(req, res, next) {
 
     if (doc && doc.user_id === userId) {
       req.docPermission = 'owner';
+      req.shareDoc = doc;
+      return next();
+    }
+
+    // Check team membership
+    const teamAccess = db.prepare(`
+      SELECT tm.role FROM team_members tm
+      JOIN team_documents td ON tm.team_id = td.team_id
+      WHERE td.document_id = ? AND tm.user_id = ?
+    `).get(docId, userId);
+
+    if (teamAccess) {
+      req.docPermission = teamAccess.role === 'viewer' ? 'view' : 'edit';
       req.shareDoc = doc;
       return next();
     }

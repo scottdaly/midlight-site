@@ -26,6 +26,7 @@ import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import TiptapTextStyle from '@tiptap/extension-text-style';
 import Highlight from '@tiptap/extension-highlight';
+import { Mark, mergeAttributes } from '@tiptap/core';
 import db from '../db/index.js';
 import { verifyAccessToken } from './tokenService.js';
 import { findUserById } from './authService.js';
@@ -56,6 +57,48 @@ const schema = getSchema([
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   TiptapTextStyle,
   Highlight,
+  // Collaboration marks — must match client extensions to avoid dropping content
+  Mark.create({
+    name: 'comment',
+    addAttributes() {
+      return {
+        commentId: { default: null },
+        resolved: { default: false },
+      };
+    },
+    parseHTML() { return [{ tag: 'span[data-comment]' }]; },
+    renderHTML({ HTMLAttributes }) {
+      return ['span', mergeAttributes(HTMLAttributes, { 'data-comment': '' }), 0];
+    },
+  }),
+  Mark.create({
+    name: 'suggestionAdded',
+    addAttributes() {
+      return {
+        suggestionId: { default: null },
+        authorId: { default: null },
+        authorName: { default: null },
+      };
+    },
+    parseHTML() { return [{ tag: 'span[data-suggestion-added]' }]; },
+    renderHTML({ HTMLAttributes }) {
+      return ['span', mergeAttributes(HTMLAttributes, { 'data-suggestion-added': '' }), 0];
+    },
+  }),
+  Mark.create({
+    name: 'suggestionRemoved',
+    addAttributes() {
+      return {
+        suggestionId: { default: null },
+        authorId: { default: null },
+        authorName: { default: null },
+      };
+    },
+    parseHTML() { return [{ tag: 'span[data-suggestion-removed]' }]; },
+    renderHTML({ HTMLAttributes }) {
+      return ['span', mergeAttributes(HTMLAttributes, { 'data-suggestion-removed': '' }), 0];
+    },
+  }),
 ]);
 
 // Track last Tiptap JSON snapshot time per document (throttle to 1 per 30s)
@@ -335,7 +378,32 @@ export const hocuspocus = HocuspocusServer.configure({
       throw err;
     }
 
-    // Load user
+    // Guest session authentication
+    if (payload.guestSessionId) {
+      const guestSession = db.prepare(
+        "SELECT * FROM guest_sessions WHERE id = ? AND document_id = ? AND expires_at > datetime('now')"
+      ).get(payload.guestSessionId, documentName);
+
+      if (!guestSession) {
+        throw new Error('Guest session expired or invalid');
+      }
+
+      // Update last_active_at
+      db.prepare('UPDATE guest_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(payload.guestSessionId);
+
+      return {
+        user: {
+          id: `guest-${payload.guestSessionId}`,
+          name: guestSession.display_name || 'Guest',
+          email: null,
+        },
+        permission: guestSession.permission,
+        isGuest: true,
+      };
+    }
+
+    // Regular user authentication
     const user = findUserById(payload.userId);
     if (!user) {
       throw new Error('User not found');
@@ -366,8 +434,10 @@ export const hocuspocus = HocuspocusServer.configure({
     }
 
     // Periodically re-check permission for long-running connections
+    // Skip for guest users — their permission is validated via session expiry, not user-based checks
     const userId = context?.user?.id;
-    if (userId && documentName) {
+    const isGuest = context?.isGuest === true;
+    if (userId && documentName && !isGuest) {
       const cacheKey = `${userId}:${documentName}`;
       const lastCheck = connectionPermissionCache.get(cacheKey) || 0;
       const now = Date.now();

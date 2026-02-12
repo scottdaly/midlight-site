@@ -12,6 +12,19 @@ const EMAIL_FROM = process.env.EMAIL_FROM || 'Midlight <noreply@midlight.ai>';
 const WEB_REDIRECT_BASE = process.env.WEB_REDIRECT_BASE || 'http://localhost:5173';
 
 /**
+ * Escape HTML special characters to prevent injection in email templates.
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * Send an email via Resend API
  * @param {object} options - Email options
  * @param {string} options.to - Recipient email
@@ -319,4 +332,100 @@ Midlight - AI-Native Document Editor
     html,
     text
   });
+}
+
+/**
+ * Send comment notification email
+ * @param {string} toEmail - Recipient email
+ * @param {string} commenterName - Commenter's display name
+ * @param {string} documentTitle - Document title
+ * @param {string} commentPreview - Preview of the comment text
+ * @param {string} url - URL to the document
+ */
+export async function sendCommentNotificationEmail(toEmail, commenterName, documentTitle, commentPreview, url) {
+  const rawPreview = commentPreview.length > 200 ? commentPreview.slice(0, 200) + '...' : commentPreview;
+  const safeName = escapeHtml(commenterName);
+  const safeTitle = escapeHtml(documentTitle);
+  const safePreview = escapeHtml(rawPreview);
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+          <tr><td align="center">
+            <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+              <tr><td style="padding: 40px;">
+                <h1 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 600; color: #111111;">New Comment</h1>
+                <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 1.6; color: #333333;">
+                  <strong>${safeName}</strong> commented on "${safeTitle}":
+                </p>
+                <div style="margin: 0 0 24px 0; padding: 12px 16px; background: #f5f5f5; border-radius: 6px; border-left: 3px solid #3b82f6;">
+                  <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #555555; font-style: italic;">"${safePreview}"</p>
+                </div>
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr><td align="center" style="padding: 8px 0 24px 0;">
+                    <a href="${url}" style="display: inline-block; padding: 14px 32px; background-color: #111111; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 500;">View Comment</a>
+                  </td></tr>
+                </table>
+                <hr style="border: none; border-top: 1px solid #eeeeee; margin: 24px 0;">
+                <p style="margin: 0; font-size: 12px; color: #999999;">You can manage notification preferences in your Midlight settings.</p>
+              </td></tr>
+            </table>
+            <p style="margin: 24px 0 0 0; font-size: 12px; color: #999999;">Midlight - AI-Native Document Editor</p>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  const text = `${commenterName} commented on "${documentTitle}":\n\n"${rawPreview}"\n\nView: ${url}\n\n---\nMidlight - AI-Native Document Editor`;
+
+  return sendEmail({ to: toEmail, subject: `${commenterName} commented on "${documentTitle}"`, html, text });
+}
+
+/**
+ * Send mention notification email
+ * @param {string} toEmail - Recipient email
+ * @param {string} mentionerName - Person who mentioned you
+ * @param {string} documentTitle - Document title
+ * @param {string} url - URL to the document
+ */
+export async function sendMentionNotificationEmail(toEmail, mentionerName, documentTitle, url) {
+  const safeName = escapeHtml(mentionerName);
+  const safeTitle = escapeHtml(documentTitle);
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+          <tr><td align="center">
+            <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+              <tr><td style="padding: 40px;">
+                <h1 style="margin: 0 0 24px 0; font-size: 24px; font-weight: 600; color: #111111;">You Were Mentioned</h1>
+                <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.6; color: #333333;">
+                  <strong>${safeName}</strong> mentioned you in "${safeTitle}".
+                </p>
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr><td align="center" style="padding: 8px 0 24px 0;">
+                    <a href="${url}" style="display: inline-block; padding: 14px 32px; background-color: #111111; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 500;">View Document</a>
+                  </td></tr>
+                </table>
+                <hr style="border: none; border-top: 1px solid #eeeeee; margin: 24px 0;">
+                <p style="margin: 0; font-size: 12px; color: #999999;">You can manage notification preferences in your Midlight settings.</p>
+              </td></tr>
+            </table>
+            <p style="margin: 24px 0 0 0; font-size: 12px; color: #999999;">Midlight - AI-Native Document Editor</p>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  const text = `${mentionerName} mentioned you in "${documentTitle}".\n\nView: ${url}\n\n---\nMidlight - AI-Native Document Editor`;
+
+  return sendEmail({ to: toEmail, subject: `${mentionerName} mentioned you in "${documentTitle}"`, html, text });
 }

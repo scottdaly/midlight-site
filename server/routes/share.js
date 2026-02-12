@@ -238,6 +238,126 @@ router.put('/link/:token/content', requireAuth, [
 });
 
 // ============================================================================
+// Guest Access
+// ============================================================================
+
+/**
+ * POST /api/share/link/:token/guest
+ * Create a guest session for a share link.
+ * Returns a short-lived guest JWT for collab access.
+ */
+router.post('/link/:token/guest', [
+  body('displayName').trim().isLength({ min: 1, max: 50 }).withMessage('Display name required (max 50 chars)'),
+], (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { token } = req.params;
+    const { displayName } = req.body;
+
+    const share = db.prepare(`
+      SELECT ds.*, sd.id AS doc_id
+      FROM document_shares ds
+      JOIN sync_documents sd ON ds.document_id = sd.id
+      WHERE ds.link_token = ? AND ds.link_enabled = 1
+    `).get(token);
+
+    if (!share) {
+      return res.status(404).json({ error: 'Share link not found' });
+    }
+
+    if (share.expires_at && new Date(share.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'This share link has expired' });
+    }
+
+    // Create guest session (24h expiry)
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    db.prepare(`
+      INSERT INTO guest_sessions (id, document_id, share_id, display_name, permission, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(sessionId, share.document_id, share.id, displayName, share.link_permission, expiresAt);
+
+    // Generate a guest JWT (1h, can be refreshed)
+    const jwt = require('jsonwebtoken');
+    const secret = process.env.ACCESS_TOKEN_SECRET || 'dev-access-secret-change-in-production';
+    const guestToken = jwt.sign(
+      { guestSessionId: sessionId, documentId: share.document_id },
+      secret,
+      { expiresIn: '1h' }
+    );
+
+    res.json({
+      sessionId,
+      token: guestToken,
+      displayName,
+      permission: share.link_permission,
+      expiresAt,
+    });
+  } catch (error) {
+    logger.error({ error: error.message }, 'Failed to create guest session');
+    res.status(500).json({ error: 'Failed to create guest session' });
+  }
+});
+
+/**
+ * POST /api/share/link/:token/guest/refresh
+ * Refresh a guest JWT before it expires.
+ */
+router.post('/link/:token/guest/refresh', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Guest token required' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const secret = process.env.ACCESS_TOKEN_SECRET || 'dev-access-secret-change-in-production';
+    const oldToken = authHeader.slice(7);
+
+    let payload;
+    try {
+      payload = jwt.verify(oldToken, secret);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired guest token' });
+    }
+
+    if (!payload.guestSessionId) {
+      return res.status(401).json({ error: 'Not a guest token' });
+    }
+
+    // Verify session still exists and isn't expired
+    const session = db.prepare(
+      "SELECT id FROM guest_sessions WHERE id = ? AND expires_at > datetime('now')"
+    ).get(payload.guestSessionId);
+
+    if (!session) {
+      return res.status(401).json({ error: 'Guest session expired' });
+    }
+
+    // Update last_active_at
+    db.prepare('UPDATE guest_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(payload.guestSessionId);
+
+    // Issue new token
+    const newToken = jwt.sign(
+      { guestSessionId: payload.guestSessionId, documentId: payload.documentId },
+      secret,
+      { expiresIn: '1h' }
+    );
+
+    res.json({ token: newToken });
+  } catch (error) {
+    logger.error({ error: error.message }, 'Failed to refresh guest token');
+    res.status(500).json({ error: 'Failed to refresh guest token' });
+  }
+});
+
+// ============================================================================
 // Owner management endpoints (require auth + pro subscription + ownership)
 // ============================================================================
 

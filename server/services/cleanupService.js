@@ -44,10 +44,26 @@ export function runCleanup() {
       "DELETE FROM document_shares WHERE expires_at IS NOT NULL AND expires_at < datetime('now', '-7 days')"
     ).run();
 
+    // Expired guest sessions (24h TTL)
+    const guestSessions = db.prepare(
+      "DELETE FROM guest_sessions WHERE expires_at < datetime('now')"
+    ).run();
+
+    // Old read notifications (30-day retention)
+    const oldNotifications = db.prepare(
+      "DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < datetime('now', '-30 days')"
+    ).run();
+
+    // Old activity events (90-day retention)
+    const oldActivity = db.prepare(
+      "DELETE FROM document_activity WHERE created_at < datetime('now', '-90 days')"
+    ).run();
+
     const totalChanges = sessions.changes + oauthStates.changes + codes.changes +
       resetTokens.changes + verificationTokens.changes +
       authEvents.changes + reports.changes + alerts.changes +
-      yjsDocs.changes + expiredShares.changes;
+      yjsDocs.changes + expiredShares.changes +
+      guestSessions.changes + oldNotifications.changes + oldActivity.changes;
 
     if (totalChanges > 0) {
       logger.info({
@@ -61,6 +77,9 @@ export function runCleanup() {
         alertsRemoved: alerts.changes,
         yjsDocsRemoved: yjsDocs.changes,
         expiredSharesRemoved: expiredShares.changes,
+        guestSessionsRemoved: guestSessions.changes,
+        oldNotificationsRemoved: oldNotifications.changes,
+        oldActivityRemoved: oldActivity.changes,
       }, 'Cleanup completed');
     }
   } catch (error) {
