@@ -34,9 +34,20 @@ export function runCleanup() {
       "DELETE FROM alert_history WHERE triggered_at < datetime('now', '-90 days')"
     ).run();
 
+    // Stale Y.js document states (30-day retention — can be recreated from Tiptap JSON)
+    const yjsDocs = db.prepare(
+      "DELETE FROM yjs_documents WHERE updated_at < datetime('now', '-30 days')"
+    ).run();
+
+    // Expired document share links (clean up expired-at shares with no access entries)
+    const expiredShares = db.prepare(
+      "DELETE FROM document_shares WHERE expires_at IS NOT NULL AND expires_at < datetime('now', '-7 days')"
+    ).run();
+
     const totalChanges = sessions.changes + oauthStates.changes + codes.changes +
       resetTokens.changes + verificationTokens.changes +
-      authEvents.changes + reports.changes + alerts.changes;
+      authEvents.changes + reports.changes + alerts.changes +
+      yjsDocs.changes + expiredShares.changes;
 
     if (totalChanges > 0) {
       logger.info({
@@ -47,7 +58,9 @@ export function runCleanup() {
         verificationTokensRemoved: verificationTokens.changes,
         authEventsRemoved: authEvents.changes,
         reportsRemoved: reports.changes,
-        alertsRemoved: alerts.changes
+        alertsRemoved: alerts.changes,
+        yjsDocsRemoved: yjsDocs.changes,
+        expiredSharesRemoved: expiredShares.changes,
       }, 'Cleanup completed');
     }
   } catch (error) {

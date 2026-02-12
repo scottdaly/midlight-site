@@ -436,7 +436,7 @@ router.delete('/:docId', requireAuth, requirePro, requireOwner, (req, res) => {
 router.post('/:docId/invite', requireAuth, requirePro, requireOwner, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('permission').optional().isIn(['view', 'edit']).withMessage('Permission must be view or edit'),
-], (req, res) => {
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -447,8 +447,8 @@ router.post('/:docId/invite', requireAuth, requirePro, requireOwner, [
     const { email, permission = 'view' } = req.body;
     const userId = req.user.id;
 
-    // Can't invite yourself
-    if (email === req.user.email) {
+    // Can't invite yourself (case-insensitive since normalizeEmail lowercases)
+    if (email.toLowerCase() === (req.user.email || '').toLowerCase()) {
       return res.status(400).json({ error: 'You cannot invite yourself' });
     }
 
@@ -503,10 +503,14 @@ router.post('/:docId/invite', requireAuth, requirePro, requireOwner, [
     const documentTitle = doc?.path?.split('/').pop()?.replace(/\.\w+$/, '') || 'Untitled';
     const shareUrl = `${WEB_REDIRECT_BASE}/s/${share.link_token}`;
 
-    // Send invitation email (fire-and-forget)
-    sendShareInvitationEmail(email, req.user.display_name || req.user.email, documentTitle, shareUrl).catch(err => {
+    // Send invitation email (await so we can report delivery status)
+    let emailSent = true;
+    try {
+      await sendShareInvitationEmail(email, req.user.display_name || req.user.email, documentTitle, shareUrl);
+    } catch (err) {
       logger.error({ error: err?.message, email }, 'Failed to send share invitation email');
-    });
+      emailSent = false;
+    }
 
     res.json({
       id: accessId,
@@ -514,6 +518,7 @@ router.post('/:docId/invite', requireAuth, requirePro, requireOwner, [
       permission,
       userId: invitee?.id || null,
       acceptedAt: invitee ? new Date().toISOString() : null,
+      emailSent,
     });
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to invite user');

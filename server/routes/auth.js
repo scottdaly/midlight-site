@@ -37,13 +37,15 @@ import db from '../db/index.js';
 // Accept pending share invitations for a user (called after successful auth)
 function acceptPendingShareInvitations(userId, email) {
   try {
+    // Use case-insensitive match since normalizeEmail may differ from stored email casing
+    const normalizedEmail = email.toLowerCase().trim();
     const pendingInvites = db.prepare(
-      'SELECT id FROM document_access WHERE email = ? AND user_id IS NULL'
-    ).all(email);
+      'SELECT id FROM document_access WHERE LOWER(email) = ? AND user_id IS NULL'
+    ).all(normalizedEmail);
     if (pendingInvites.length > 0) {
       db.prepare(
-        'UPDATE document_access SET user_id = ?, accepted_at = CURRENT_TIMESTAMP WHERE email = ? AND user_id IS NULL'
-      ).run(userId, email);
+        'UPDATE document_access SET user_id = ?, accepted_at = CURRENT_TIMESTAMP WHERE LOWER(email) = ? AND user_id IS NULL'
+      ).run(userId, normalizedEmail);
     }
   } catch (err) {
     logger.error({ error: err?.message, userId, email }, 'Failed to accept pending share invitations');

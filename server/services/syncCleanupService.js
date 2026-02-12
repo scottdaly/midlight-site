@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.js';
 const SOFT_DELETE_RETENTION_DAYS = 30;
 const CONFLICT_RETENTION_DAYS = 7;
 const OPERATION_LOG_RETENTION_DAYS = 90;
+const YJS_STATE_RETENTION_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 let cleanupInterval = null;
@@ -129,6 +130,21 @@ function cleanupOperationLogs() {
 }
 
 /**
+ * Clean up stale Y.js document states not updated in YJS_STATE_RETENTION_DAYS.
+ * These are ephemeral collab states that can be recreated from Tiptap JSON.
+ */
+function cleanupStaleYjsDocuments() {
+  const result = db
+    .prepare(`
+      DELETE FROM yjs_documents
+      WHERE updated_at < datetime('now', '-${YJS_STATE_RETENTION_DAYS} days')
+    `)
+    .run();
+
+  return result.changes;
+}
+
+/**
  * Run all cleanup tasks
  */
 async function runCleanup() {
@@ -139,9 +155,11 @@ async function runCleanup() {
       Promise.resolve(cleanupOperationLogs()),
     ]);
 
-    if (documents > 0 || conflicts > 0 || operations > 0) {
+    const yjsDocs = cleanupStaleYjsDocuments();
+
+    if (documents > 0 || conflicts > 0 || operations > 0 || yjsDocs > 0) {
       logger.info(
-        { documents, conflicts, operations },
+        { documents, conflicts, operations, yjsDocs },
         'Sync cleanup completed'
       );
     }

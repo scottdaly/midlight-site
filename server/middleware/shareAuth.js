@@ -14,19 +14,27 @@ import db from '../db/index.js';
  * @returns {'owner' | 'edit' | 'view' | null}
  */
 export function getDocumentPermission(userId, documentId) {
-  // Check ownership
+  // 1. Check ownership
   const doc = db.prepare(
     'SELECT id FROM sync_documents WHERE id = ? AND user_id = ?'
   ).get(documentId, userId);
   if (doc) return 'owner';
 
-  // Check explicit access via document_access
+  // 2. Check explicit access via document_access
   const access = db.prepare(`
     SELECT da.permission FROM document_access da
     JOIN document_shares ds ON da.share_id = ds.id
     WHERE ds.document_id = ? AND da.user_id = ? AND da.accepted_at IS NOT NULL
   `).get(documentId, userId);
   if (access) return access.permission;
+
+  // 3. Check link-based sharing (any authenticated user gets link_permission)
+  const share = db.prepare(`
+    SELECT link_permission FROM document_shares
+    WHERE document_id = ? AND link_enabled = 1
+      AND (expires_at IS NULL OR expires_at > datetime('now'))
+  `).get(documentId);
+  if (share) return share.link_permission;
 
   return null;
 }

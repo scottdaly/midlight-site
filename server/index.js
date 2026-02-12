@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -35,6 +36,8 @@ import {
 import { logger, requestLogger } from './utils/logger.js';
 import { CONFIG } from './config/index.js';
 import { startSyncCleanup } from './services/syncCleanupService.js';
+import { WebSocketServer } from 'ws';
+import { hocuspocus } from './services/collabService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -288,7 +291,37 @@ app.use(errorHandler);             // Global error handler
 // Setup process-level error handlers
 setupProcessErrorHandlers();
 
-app.listen(PORT, () => {
+// Create HTTP server for Express + WebSocket upgrade handling
+const server = createServer(app);
+
+// WebSocket upgrade handler for collaborative editing
+const collabWss = new WebSocketServer({ noServer: true });
+
+collabWss.on('connection', (ws, request) => {
+  hocuspocus.handleConnection(ws, request);
+});
+
+server.on('upgrade', (request, socket, head) => {
+  if (!request.url?.startsWith('/collab')) {
+    socket.destroy();
+    return;
+  }
+
+  // Origin validation (CORS doesn't apply to WebSocket upgrades)
+  const origin = request.headers.origin;
+  if (origin && !allowedOrigins.includes(origin)) {
+    logger.warn({ origin }, 'WebSocket upgrade rejected: invalid origin');
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  collabWss.handleUpgrade(request, socket, head, (ws) => {
+    collabWss.emit('connection', ws, request);
+  });
+});
+
+server.listen(PORT, () => {
   const providers = getProviderStatus();
 
   // Start sync cleanup service (expired documents, resolved conflicts, old logs)
@@ -306,3 +339,14 @@ app.listen(PORT, () => {
     },
   }, 'Server started');
 });
+
+// Graceful shutdown: flush Y.js state before exit
+function gracefulShutdown(signal) {
+  logger.info({ signal }, 'Shutting down');
+  server.close();
+  collabWss.close();
+  hocuspocus.destroy();
+  setTimeout(() => process.exit(0), 3000);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

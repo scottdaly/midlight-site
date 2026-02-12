@@ -698,3 +698,18 @@ CREATE TABLE IF NOT EXISTS document_access (
 
 CREATE INDEX IF NOT EXISTS idx_document_access_user ON document_access(user_id);
 CREATE INDEX IF NOT EXISTS idx_document_access_share ON document_access(share_id);
+CREATE INDEX IF NOT EXISTS idx_document_access_user_accepted ON document_access(user_id, accepted_at);
+
+-- ============================================================================
+-- COLLABORATIVE EDITING (Y.js / Hocuspocus)
+-- ============================================================================
+
+-- Y.js Document State (binary CRDT state per shared document)
+CREATE TABLE IF NOT EXISTS yjs_documents (
+  document_id TEXT PRIMARY KEY,
+  state BLOB NOT NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_yjs_documents_updated ON yjs_documents(updated_at);

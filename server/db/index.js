@@ -550,6 +550,21 @@ function runMigrations() {
         console.log('Migration: Created yjs_documents table for collaborative editing');
       }
     },
+    // Add performance indexes for collaborative editing
+    {
+      name: 'add_collab_indexes',
+      check: () => {
+        const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_document_access_user_accepted'").all();
+        return idx.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_document_access_user_accepted ON document_access(user_id, accepted_at);
+          CREATE INDEX IF NOT EXISTS idx_yjs_documents_updated ON yjs_documents(updated_at);
+        `);
+        console.log('Migration: Added collaborative editing performance indexes');
+      }
+    },
   ];
 
   for (const migration of migrations) {
