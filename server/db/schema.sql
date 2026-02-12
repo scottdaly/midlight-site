@@ -658,3 +658,43 @@ CREATE TABLE IF NOT EXISTS user_variant_assignments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_variant_assignments_user ON user_variant_assignments(user_id);
+
+-- ============================================================================
+-- DOCUMENT SHARING SYSTEM
+-- ============================================================================
+
+-- Document Shares (one per document, tracks link sharing settings)
+CREATE TABLE IF NOT EXISTS document_shares (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  owner_id INTEGER NOT NULL,
+  link_token TEXT UNIQUE,
+  link_permission TEXT NOT NULL DEFAULT 'view',
+  link_enabled INTEGER NOT NULL DEFAULT 0,
+  allow_copy INTEGER NOT NULL DEFAULT 1,
+  expires_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_shares_document ON document_shares(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_shares_link_token ON document_shares(link_token) WHERE link_token IS NOT NULL;
+
+-- Document Access (per-user invitation entries)
+CREATE TABLE IF NOT EXISTS document_access (
+  id TEXT PRIMARY KEY,
+  share_id TEXT NOT NULL,
+  user_id INTEGER,
+  email TEXT NOT NULL,
+  permission TEXT NOT NULL DEFAULT 'view',
+  accepted_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (share_id) REFERENCES document_shares(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE(share_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_access_user ON document_access(user_id);
+CREATE INDEX IF NOT EXISTS idx_document_access_share ON document_access(share_id);

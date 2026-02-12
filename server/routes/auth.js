@@ -32,6 +32,23 @@ import { sendPasswordResetEmail, sendEmailVerificationEmail } from '../services/
 import { authLimiter, signupLimiter, refreshLimiter, exchangeLimiter } from '../middleware/rateLimiters.js';
 import { requireAuth } from '../middleware/auth.js';
 import { logAuthEvent } from '../services/auditService.js';
+import db from '../db/index.js';
+
+// Accept pending share invitations for a user (called after successful auth)
+function acceptPendingShareInvitations(userId, email) {
+  try {
+    const pendingInvites = db.prepare(
+      'SELECT id FROM document_access WHERE email = ? AND user_id IS NULL'
+    ).all(email);
+    if (pendingInvites.length > 0) {
+      db.prepare(
+        'UPDATE document_access SET user_id = ?, accepted_at = CURRENT_TIMESTAMP WHERE email = ? AND user_id IS NULL'
+      ).run(userId, email);
+    }
+  } catch (err) {
+    logger.error({ error: err?.message, userId, email }, 'Failed to accept pending share invitations');
+  }
+}
 
 const router = Router();
 
@@ -227,6 +244,9 @@ router.post('/signup', signupLimiter, signupValidation, async (req, res) => {
 
     logAuthEvent({ userId: user.id, eventType: 'signup', ipHash, userAgent });
 
+    // Accept pending share invitations for this email
+    acceptPendingShareInvitations(user.id, user.email);
+
     res.status(201).json({
       user: {
         id: user.id,
@@ -281,6 +301,9 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
     setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
     logAuthEvent({ userId: user.id, eventType: 'login', ipHash, userAgent });
+
+    // Accept pending share invitations for this email
+    acceptPendingShareInvitations(user.id, user.email);
 
     res.json({
       user: {
@@ -618,6 +641,9 @@ router.post('/exchange', exchangeLimiter, (req, res) => {
 
     // Set refresh token cookie (for future refreshes)
     setRefreshCookie(res, result.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+
+    // Accept pending share invitations for this email
+    acceptPendingShareInvitations(user.id, user.email);
 
     res.json({
       user: {
