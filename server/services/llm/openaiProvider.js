@@ -106,11 +106,15 @@ export async function chat({
 
   const response = await client.chat.completions.create(params);
 
+  const message = response.choices[0]?.message;
+  const thinkingContent = message?.reasoning_content || message?.reasoning || '';
+
   return {
     id: response.id,
     provider: 'openai',
     model: response.model,
-    content: response.choices[0]?.message?.content || '',
+    content: message?.content || '',
+    ...(thinkingContent && { thinkingContent }),
     finishReason: response.choices[0]?.finish_reason,
     usage: {
       promptTokens: response.usage?.prompt_tokens || 0,
@@ -128,8 +132,19 @@ async function* streamChat(params) {
   let completionTokens = 0;
 
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content || '';
-    totalContent += delta;
+    const delta = chunk.choices[0]?.delta;
+
+    // Reasoning/thinking content (OpenAI reasoning models)
+    const thinking = delta?.reasoning_content || delta?.reasoning || '';
+    if (thinking) {
+      yield { type: 'thinking', thinking, finishReason: null };
+    }
+
+    const content = delta?.content || '';
+    if (content) {
+      totalContent += content;
+      yield { type: 'chunk', content, finishReason: chunk.choices[0]?.finish_reason || null };
+    }
 
     // Usage is only available in the final chunk for some models
     if (chunk.usage) {
@@ -137,11 +152,10 @@ async function* streamChat(params) {
       completionTokens = chunk.usage.completion_tokens;
     }
 
-    yield {
-      type: 'chunk',
-      content: delta,
-      finishReason: chunk.choices[0]?.finish_reason || null
-    };
+    // Yield finish reason if no content or thinking (e.g. final chunk)
+    if (!content && !thinking && chunk.choices[0]?.finish_reason) {
+      yield { type: 'chunk', content: '', finishReason: chunk.choices[0].finish_reason };
+    }
   }
 
   // Final message with usage stats
@@ -189,6 +203,7 @@ export async function chatWithTools({
   const response = await client.chat.completions.create(params);
 
   const message = response.choices[0]?.message;
+  const thinkingContent = message?.reasoning_content || message?.reasoning || '';
   const toolCalls = message?.tool_calls?.map(tc => {
     let args = {};
     try {
@@ -209,12 +224,118 @@ export async function chatWithTools({
     provider: 'openai',
     model: response.model,
     content: message?.content || '',
+    ...(thinkingContent && { thinkingContent }),
     toolCalls: toolCalls || [],
     finishReason: response.choices[0]?.finish_reason,
     usage: {
       promptTokens: response.usage?.prompt_tokens || 0,
       completionTokens: response.usage?.completion_tokens || 0,
       totalTokens: response.usage?.total_tokens || 0
+    }
+  };
+}
+
+export async function* chatWithToolsStream({
+  model,
+  messages,
+  tools,
+  temperature = 0.7,
+  maxTokens = 4096
+}) {
+  const params = {
+    model,
+    messages: convertMessages(messages),
+    tools: tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters
+      }
+    })),
+    max_completion_tokens: maxTokens,
+    stream: true
+  };
+
+  // Only include temperature if the model supports it
+  if (!NO_TEMPERATURE_MODELS.includes(model)) {
+    params.temperature = temperature;
+  }
+
+  const stream = await client.chat.completions.create(params);
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  // Accumulate tool calls by index
+  const toolCallAccumulators = new Map();
+  let toolCallsStarted = false;
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta;
+
+    // Reasoning/thinking content
+    const thinking = delta?.reasoning_content || delta?.reasoning || '';
+    if (thinking) {
+      yield { type: 'thinking', thinking };
+    }
+
+    // Regular content — suppress once tool calls have started
+    const content = delta?.content || '';
+    if (content && !toolCallsStarted) {
+      yield { type: 'content', content };
+    }
+
+    // Tool calls (streamed incrementally by index)
+    if (delta?.tool_calls) {
+      toolCallsStarted = true;
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        if (!toolCallAccumulators.has(idx)) {
+          toolCallAccumulators.set(idx, { id: '', name: '', arguments: '' });
+        }
+        const acc = toolCallAccumulators.get(idx);
+        if (tc.id) acc.id = tc.id;
+        if (tc.function?.name) acc.name = tc.function.name;
+        if (tc.function?.arguments) acc.arguments += tc.function.arguments;
+
+        // Emit early notification as soon as we know the tool name + id
+        if (acc.id && acc.name && !acc.notified) {
+          acc.notified = true;
+          yield {
+            type: 'tool_call',
+            toolCall: { id: acc.id, name: acc.name, arguments: {} }
+          };
+        }
+      }
+    }
+
+    if (chunk.usage) {
+      promptTokens = chunk.usage.prompt_tokens;
+      completionTokens = chunk.usage.completion_tokens;
+    }
+  }
+
+  // Emit completed tool calls with parsed arguments
+  for (const [, acc] of toolCallAccumulators) {
+    let args = {};
+    try {
+      args = acc.arguments ? JSON.parse(acc.arguments) : {};
+    } catch (e) {
+      console.error('[OpenAI] Failed to parse streamed tool arguments:', acc.arguments?.substring(0, 200), e);
+    }
+    yield {
+      type: 'tool_call',
+      toolCall: { id: acc.id, name: acc.name, arguments: args }
+    };
+  }
+
+  yield {
+    type: 'done',
+    finishReason: 'stop',
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens
     }
   };
 }

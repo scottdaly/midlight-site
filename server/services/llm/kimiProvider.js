@@ -148,7 +148,9 @@ export async function chat({
     const response = await client.chat.completions.create(params);
 
     const choice = response.choices[0];
-    let content = choice?.message?.content || '';
+    const message = choice?.message;
+    let content = message?.content || '';
+    const thinkingContent = message?.reasoning_content || message?.reasoning || '';
 
     console.log(`[Kimi] Chat completed via ${source}`);
 
@@ -157,6 +159,7 @@ export async function chat({
       provider: 'kimi',
       model: model, // Return the original model ID
       content,
+      ...(thinkingContent && { thinkingContent }),
       finishReason: choice?.finish_reason,
       usage: {
         promptTokens: response.usage?.prompt_tokens || 0,
@@ -274,6 +277,7 @@ export async function chatWithTools({
     const response = await client.chat.completions.create(params);
 
     const message = response.choices[0]?.message;
+    const thinkingContent = message?.reasoning_content || message?.reasoning || '';
     const toolCalls = message?.tool_calls?.map(tc => {
       let args = {};
       try {
@@ -296,6 +300,7 @@ export async function chatWithTools({
       provider: 'kimi',
       model: model,
       content: message?.content || '',
+      ...(thinkingContent && { thinkingContent }),
       toolCalls: toolCalls || [],
       finishReason: response.choices[0]?.finish_reason,
       usage: {

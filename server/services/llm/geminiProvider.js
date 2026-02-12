@@ -168,7 +168,22 @@ export async function chat({
 
   const result = await generativeModel.generateContent({ contents });
   const response = result.response;
-  const text = response.text();
+  const candidate = response.candidates?.[0];
+
+  // Separate thinking from regular content by checking part.thought
+  let textContent = '';
+  let thinkingContent = '';
+  if (candidate?.content?.parts) {
+    for (const part of candidate.content.parts) {
+      if (part.thought && part.text) {
+        thinkingContent += part.text;
+      } else if (part.text) {
+        textContent += part.text;
+      }
+    }
+  } else {
+    textContent = response.text();
+  }
 
   // Gemini doesn't provide token counts in the same way, estimate from response
   const usageMetadata = response.usageMetadata || {};
@@ -177,8 +192,9 @@ export async function chat({
     id: `gemini-${Date.now()}`,
     provider: 'gemini',
     model,
-    content: text,
-    finishReason: response.candidates?.[0]?.finishReason || 'stop',
+    content: textContent,
+    ...(thinkingContent && { thinkingContent }),
+    finishReason: candidate?.finishReason || 'stop',
     usage: {
       promptTokens: usageMetadata.promptTokenCount || 0,
       completionTokens: usageMetadata.candidatesTokenCount || 0,
@@ -281,13 +297,16 @@ export async function chatWithTools({
   const response = result.response;
   const candidate = response.candidates?.[0];
 
-  // Extract text content and function calls from parts
+  // Extract text content, thinking content, and function calls from parts
   let textContent = '';
+  let thinkingContent = '';
   const toolCalls = [];
 
   if (candidate?.content?.parts) {
     for (const part of candidate.content.parts) {
-      if (part.text) {
+      if (part.thought && part.text) {
+        thinkingContent += part.text;
+      } else if (part.text) {
         textContent += part.text;
       }
       if (part.functionCall) {
@@ -307,12 +326,101 @@ export async function chatWithTools({
     provider: 'gemini',
     model,
     content: textContent,
+    ...(thinkingContent && { thinkingContent }),
     toolCalls,
     finishReason: candidate?.finishReason || 'stop',
     usage: {
       promptTokens: usageMetadata.promptTokenCount || 0,
       completionTokens: usageMetadata.candidatesTokenCount || 0,
       totalTokens: usageMetadata.totalTokenCount || 0
+    }
+  };
+}
+
+export async function* chatWithToolsStream({
+  model,
+  messages,
+  tools,
+  temperature = 0.7,
+  maxTokens = 4096
+}) {
+  const { systemInstruction, contents } = convertMessages(messages);
+  const geminiTools = convertTools(tools);
+  const apiModel = MODEL_ID_MAP[model] || model;
+  const thinkingCfg = THINKING_CONFIG[model];
+
+  const generativeModel = genAI.getGenerativeModel({
+    model: apiModel,
+    ...(systemInstruction && { systemInstruction }),
+    ...(geminiTools && { tools: [geminiTools] }),
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+      ...(thinkingCfg || {})
+    }
+  });
+
+  let result;
+  try {
+    result = await generativeModel.generateContentStream({ contents });
+  } catch (error) {
+    const normalizedError = new Error(error.message || 'Gemini streaming request failed');
+    normalizedError.code = error.code || 'PROVIDER_ERROR';
+    normalizedError.provider = 'gemini';
+    throw normalizedError;
+  }
+
+  let totalContent = '';
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let finishReason = 'stop';
+
+  for await (const chunk of result.stream) {
+    const candidate = chunk.candidates?.[0];
+    const parts = candidate?.content?.parts;
+
+    if (parts) {
+      for (const part of parts) {
+        if (part.thought && part.text) {
+          // Thinking/reasoning content
+          yield { type: 'thinking', thinking: part.text };
+        } else if (part.text) {
+          // Regular content
+          totalContent += part.text;
+          yield { type: 'content', content: part.text };
+        }
+        if (part.functionCall) {
+          yield {
+            type: 'tool_call',
+            toolCall: {
+              id: `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              name: part.functionCall.name,
+              arguments: part.functionCall.args || {}
+            }
+          };
+        }
+      }
+    }
+
+    if (candidate?.finishReason) {
+      finishReason = candidate.finishReason;
+    }
+  }
+
+  // Get final response for usage metadata
+  const finalResponse = await result.response;
+  const usageMetadata = finalResponse.usageMetadata || {};
+  promptTokens = usageMetadata.promptTokenCount || 0;
+  completionTokens = usageMetadata.candidatesTokenCount || 0;
+
+  yield {
+    type: 'done',
+    content: totalContent,
+    finishReason,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens
     }
   };
 }

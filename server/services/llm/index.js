@@ -348,6 +348,9 @@ export async function chatWithToolsStream({
     // Fall back to non-streaming for providers without stream support
     const response = await providerService.chatWithTools({ model, messages: messagesWithSearch, tools, temperature, maxTokens, webSearchEnabled: false });
     async function* nonStreamingFallback() {
+      if (response.thinkingContent) {
+        yield { type: 'thinking', thinking: response.thinkingContent };
+      }
       if (response.content) {
         yield { type: 'content', content: response.content };
       }

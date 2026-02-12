@@ -148,11 +148,17 @@ export async function chat({
     .map(block => block.text)
     .join('');
 
+  const thinkingContent = response.content
+    .filter(block => block.type === 'thinking')
+    .map(block => block.thinking)
+    .join('');
+
   return {
     id: response.id,
     provider: 'anthropic',
     model: response.model,
     content,
+    ...(thinkingContent && { thinkingContent }),
     finishReason: response.stop_reason,
     usage: {
       promptTokens: response.usage?.input_tokens || 0,
@@ -255,6 +261,11 @@ export async function chatWithTools({
     .map(block => block.text)
     .join('');
 
+  const thinkingContent = response.content
+    .filter(block => block.type === 'thinking')
+    .map(block => block.thinking)
+    .join('');
+
   const toolCalls = response.content
     .filter(block => block.type === 'tool_use')
     .map(block => ({
@@ -268,6 +279,7 @@ export async function chatWithTools({
     provider: 'anthropic',
     model: response.model,
     content: textContent,
+    ...(thinkingContent && { thinkingContent }),
     toolCalls,
     finishReason: response.stop_reason,
     usage: {
