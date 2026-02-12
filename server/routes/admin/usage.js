@@ -454,13 +454,13 @@ router.get('/today', (req, res) => {
       userMap[row.user_id].tokens += row.tokens;
       userMap[row.user_id].costCents += computeCostCents(row.provider, row.model, row.promptTokens, row.completionTokens);
     }
-    const topUsers = Object.values(userMap)
+    const allUsersToday = Object.values(userMap)
       .map(u => ({ ...u, costCents: Math.round(u.costCents * 100) / 100 }))
-      .sort((a, b) => b.requests - a.requests)
-      .slice(0, 5);
+      .sort((a, b) => b.requests - a.requests);
+    const topUsers = allUsersToday.slice(0, 5);
 
-    // Estimated cost today
-    const totalCostCents = topUsers.reduce((sum, u) => sum + u.costCents, 0);
+    // Estimated cost today (from ALL users, not just top 5)
+    const totalCostCents = allUsersToday.reduce((sum, u) => sum + u.costCents, 0);
 
     res.json({
       requests: totals.requests,

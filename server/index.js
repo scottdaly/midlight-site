@@ -22,6 +22,7 @@ import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
 import promptsRouter from './routes/prompts.js';
 import shareRouter from './routes/share.js';
+import { adminLimiter } from './middleware/rateLimiters.js';
 import { configurePassport } from './config/passport.js';
 import db from './db/index.js';
 import { startCleanupService } from './services/cleanupService.js';
@@ -260,7 +261,7 @@ app.use('/api', (req, res, next) => {
 });
 
 // Admin protection
-app.use('/api/admin', basicAuth);
+app.use('/api/admin', adminLimiter, basicAuth);
 
 // API Routes
 app.use('/api', reportsRouter);

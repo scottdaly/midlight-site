@@ -1,7 +1,6 @@
 import express from 'express';
 import fs from 'fs';
-import path from 'path';
-import db from '../../db/index.js';
+import db, { dbPath } from '../../db/index.js';
 import { logger } from '../../utils/logger.js';
 
 const router = express.Router();
@@ -13,7 +12,6 @@ const router = express.Router();
 router.get('/', (req, res) => {
   try {
     // Database size
-    const dbPath = process.env.DB_PATH || './midlight_errors.db';
     let sizeBytes = 0;
     try {
       const stat = fs.statSync(dbPath);

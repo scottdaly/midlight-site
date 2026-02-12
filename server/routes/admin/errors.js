@@ -76,14 +76,9 @@ router.get('/stats', (req, res) => {
  */
 router.get('/issues', (req, res) => {
   try {
-    const {
-      limit = 50,
-      offset = 0,
-      status,
-      category,
-      sort = 'last_seen_at',
-      order = 'DESC'
-    } = req.query;
+    const { status, category, sort = 'last_seen_at', order = 'DESC' } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
 
     // Build WHERE clause
     const conditions = [];
@@ -123,15 +118,15 @@ router.get('/issues', (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const issues = db.prepare(query).all(...params, parseInt(limit), parseInt(offset));
+    const issues = db.prepare(query).all(...params, limit, offset);
 
     res.json({
       issues,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        hasMore: parseInt(offset) + issues.length < total
+        limit,
+        offset,
+        hasMore: offset + issues.length < total
       }
     });
 
@@ -319,7 +314,8 @@ router.post('/issues/bulk', (req, res) => {
 router.get('/issues/:id/reports', (req, res) => {
   try {
     const { id } = req.params;
-    const { limit = 50, offset = 0 } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
 
     // Get total count
     const { total } = db.prepare(
@@ -334,7 +330,7 @@ router.get('/issues/:id/reports', (req, res) => {
       WHERE issue_id = ?
       ORDER BY received_at DESC
       LIMIT ? OFFSET ?
-    `).all(id, parseInt(limit), parseInt(offset));
+    `).all(id, limit, offset);
 
     // Parse context JSON
     const parsedReports = reports.map(r => ({
@@ -346,9 +342,9 @@ router.get('/issues/:id/reports', (req, res) => {
       reports: parsedReports,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        hasMore: parseInt(offset) + reports.length < total
+        limit,
+        offset,
+        hasMore: offset + reports.length < total
       }
     });
 
@@ -516,7 +512,8 @@ router.delete('/alerts/:id', (req, res) => {
  */
 router.get('/alerts/history', (req, res) => {
   try {
-    const { limit = 50, offset = 0 } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
 
     const history = db.prepare(`
       SELECT ah.*, ar.name as rule_name, ar.rule_type,
@@ -526,7 +523,7 @@ router.get('/alerts/history', (req, res) => {
       LEFT JOIN error_issues ei ON ah.issue_id = ei.id
       ORDER BY ah.triggered_at DESC
       LIMIT ? OFFSET ?
-    `).all(parseInt(limit), parseInt(offset));
+    `).all(limit, offset);
 
     res.json({ history });
 

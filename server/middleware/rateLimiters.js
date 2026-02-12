@@ -2,6 +2,15 @@ import rateLimit from 'express-rate-limit';
 import { createHash } from 'crypto';
 import db from '../db/index.js';
 
+// Rate Limiter for Admin API
+export const adminLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // 100 requests per minute per IP
+  message: { error: 'Too many admin requests, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Rate Limiters for Auth Endpoints (brute force protection)
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

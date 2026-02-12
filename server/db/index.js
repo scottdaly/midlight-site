@@ -535,4 +535,5 @@ db.exec(schema);
 
 console.log(`Connected to SQLite database at ${dbPath}`);
 
+export { dbPath };
 export default db;
