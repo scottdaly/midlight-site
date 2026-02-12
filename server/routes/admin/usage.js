@@ -400,4 +400,81 @@ router.get('/users/:userId', (req, res) => {
   }
 });
 
+/**
+ * GET /api/admin/usage/today
+ * Today's usage stats: requests, tokens, active users, hourly breakdown, top users
+ */
+router.get('/today', (req, res) => {
+  try {
+    // Totals for today
+    const totals = db.prepare(`
+      SELECT
+        COUNT(*) as requests,
+        COALESCE(SUM(total_tokens), 0) as tokens,
+        COUNT(DISTINCT user_id) as activeUsers
+      FROM llm_usage
+      WHERE created_at >= date('now')
+    `).get();
+
+    // Hourly breakdown
+    const hourly = db.prepare(`
+      SELECT
+        strftime('%H', created_at) as hour,
+        COUNT(*) as requests,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE created_at >= date('now')
+      GROUP BY strftime('%H', created_at)
+      ORDER BY hour
+    `).all();
+
+    // Top 5 users today with cost
+    const topUsersRaw = db.prepare(`
+      SELECT
+        u.user_id, us.email,
+        COUNT(*) as requests,
+        COALESCE(SUM(u.total_tokens), 0) as tokens,
+        u.provider, u.model,
+        COALESCE(SUM(u.prompt_tokens), 0) as promptTokens,
+        COALESCE(SUM(u.completion_tokens), 0) as completionTokens
+      FROM llm_usage u
+      JOIN users us ON u.user_id = us.id
+      WHERE u.created_at >= date('now')
+      GROUP BY u.user_id, u.provider, u.model
+      ORDER BY requests DESC
+    `).all();
+
+    // Aggregate by user
+    const userMap = {};
+    for (const row of topUsersRaw) {
+      if (!userMap[row.user_id]) {
+        userMap[row.user_id] = { userId: row.user_id, email: row.email, requests: 0, tokens: 0, costCents: 0 };
+      }
+      userMap[row.user_id].requests += row.requests;
+      userMap[row.user_id].tokens += row.tokens;
+      userMap[row.user_id].costCents += computeCostCents(row.provider, row.model, row.promptTokens, row.completionTokens);
+    }
+    const topUsers = Object.values(userMap)
+      .map(u => ({ ...u, costCents: Math.round(u.costCents * 100) / 100 }))
+      .sort((a, b) => b.requests - a.requests)
+      .slice(0, 5);
+
+    // Estimated cost today
+    const totalCostCents = topUsers.reduce((sum, u) => sum + u.costCents, 0);
+
+    res.json({
+      requests: totals.requests,
+      tokens: totals.tokens,
+      activeUsers: totals.activeUsers,
+      costCents: Math.round(totalCostCents * 100) / 100,
+      costDollars: (totalCostCents / 100).toFixed(2),
+      hourly,
+      topUsers
+    });
+  } catch (err) {
+    logger.error({ error: err?.message || err }, 'Error fetching today usage');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;

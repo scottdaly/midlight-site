@@ -47,14 +47,28 @@ export async function checkQuota(userId) {
   `);
   const usage = stmt.get(userId, currentMonth);
   const used = usage?.billable_tokens || 0;
+  const remaining = Math.max(0, limit - used);
+
+  // Calculate burn rate (average daily billable tokens over last 7 days)
+  const burnRateRow = db.prepare(`
+    SELECT COALESCE(SUM(total_tokens), 0) / MAX(COUNT(DISTINCT date(created_at)), 1) as dailyRate
+    FROM llm_usage
+    WHERE user_id = ? AND created_at > datetime('now', '-7 days')
+      AND (request_type IS NULL OR request_type NOT IN ('classification', 'compaction'))
+  `).get(userId);
+
+  const burnRate = burnRateRow?.dailyRate || 0;
+  const estimatedDaysRemaining = burnRate > 0 ? remaining / burnRate : null;
 
   return {
     allowed: used < limit,
     tier,
     limit,
     used,
-    remaining: Math.max(0, limit - used),
-    resetsAt: getResetsAt()
+    remaining,
+    resetsAt: getResetsAt(),
+    burnRate,
+    estimatedDaysRemaining
   };
 }
 

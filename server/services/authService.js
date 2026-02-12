@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import crypto from 'crypto';
 import db from '../db/index.js';
+import { logger } from '../utils/logger.js';
 
 export async function hashPassword(password) {
   return argon2.hash(password, {
@@ -103,9 +104,44 @@ export async function updatePassword(userId, newPassword) {
   stmt.run(passwordHash, userId);
 }
 
+const archiveAndDeleteUser = db.transaction((userId) => {
+  // Gather user data for archive
+  const user = db.prepare('SELECT email, created_at FROM users WHERE id = ?').get(userId);
+  const sub = db.prepare('SELECT tier, status, billing_interval, current_period_start, current_period_end, created_at FROM subscriptions WHERE user_id = ?').get(userId);
+  const usageAgg = db.prepare(`
+    SELECT COALESCE(SUM(request_count), 0) as total_requests,
+           COALESCE(SUM(total_tokens), 0) as total_tokens
+    FROM llm_usage_monthly WHERE user_id = ?
+  `).get(userId);
+
+  if (user) {
+    const emailHash = crypto.createHash('sha256').update(user.email).digest('hex');
+    db.prepare(`
+      INSERT INTO archived_users (original_user_id, email_hash, tier, total_requests, total_tokens, subscription_history, account_created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      emailHash,
+      sub?.tier || 'free',
+      usageAgg?.total_requests || 0,
+      usageAgg?.total_tokens || 0,
+      sub ? JSON.stringify({ tier: sub.tier, status: sub.status, billingInterval: sub.billing_interval, periodStart: sub.current_period_start, periodEnd: sub.current_period_end }) : null,
+      user.created_at
+    );
+  }
+
+  // Delete user (cascades to related tables)
+  return db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+});
+
 export function deleteUser(userId) {
-  const stmt = db.prepare('DELETE FROM users WHERE id = ?');
-  return stmt.run(userId);
+  try {
+    return archiveAndDeleteUser(userId);
+  } catch (err) {
+    logger.error({ error: err?.message, userId }, 'Failed to archive and delete user');
+    // Fall back to plain delete if archival fails
+    return db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  }
 }
 
 // Transaction wrapper for creating new OAuth user with subscription

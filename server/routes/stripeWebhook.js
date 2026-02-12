@@ -7,8 +7,40 @@ import {
   handleInvoicePaymentFailed,
 } from '../services/subscriptionService.js';
 import { logger } from '../utils/logger.js';
+import db from '../db/index.js';
 
 const router = express.Router();
+
+const logBillingEventStmt = db.prepare(`
+  INSERT OR IGNORE INTO billing_events (stripe_event_id, event_type, user_id, stripe_customer_id, data_summary)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+function logBillingEvent(event) {
+  try {
+    const obj = event.data.object;
+    const userId = obj.metadata?.user_id ? parseInt(obj.metadata.user_id, 10) : null;
+    const customerId = obj.customer || null;
+    const summary = {};
+
+    if (obj.status) summary.status = obj.status;
+    if (obj.plan?.interval) summary.interval = obj.plan.interval;
+    if (obj.amount_paid != null) summary.amountPaid = obj.amount_paid;
+    if (obj.amount_due != null) summary.amountDue = obj.amount_due;
+    if (obj.currency) summary.currency = obj.currency;
+    if (obj.items?.data?.[0]?.price?.lookup_key) summary.tier = obj.items.data[0].price.lookup_key;
+
+    logBillingEventStmt.run(
+      event.id,
+      event.type,
+      userId,
+      customerId,
+      JSON.stringify(summary)
+    );
+  } catch (err) {
+    logger.warn({ error: err?.message, eventId: event.id }, 'Failed to log billing event');
+  }
+}
 
 /**
  * POST /api/stripe-webhook
@@ -77,6 +109,9 @@ router.post('/', async (req, res) => {
       default:
         logger.info({ eventType: event.type }, 'Unhandled event type');
     }
+
+    // Log all webhook events for audit trail
+    logBillingEvent(event);
 
     res.json({ received: true });
   } catch (error) {

@@ -16,6 +16,7 @@ import {
   getRemainingPasswordAttempts
 } from '../middleware/rateLimiters.js';
 import { checkQuota, getQuotaLimit, getResetsAt } from '../services/llm/quotaManager.js';
+import { CONFIG } from '../config/index.js';
 import db from '../db/index.js';
 
 const router = Router();
@@ -242,9 +243,26 @@ router.get('/usage', (req, res) => {
     const used = rollup?.billable_tokens || 0;
     const remaining = limit === Infinity ? null : Math.max(0, limit - used);
 
+    // Search usage for today
+    const searchToday = db.prepare(`
+      SELECT COALESCE(SUM(query_count), 0) as used
+      FROM search_usage
+      WHERE user_id = ? AND date(created_at) = date('now')
+    `).get(req.user.id);
+
+    // Search cost this month
+    const searchMonthly = db.prepare(`
+      SELECT COALESCE(total_cost_cents, 0) as costCents
+      FROM search_usage_monthly
+      WHERE user_id = ? AND month = ?
+    `).get(req.user.id, currentMonth);
+
+    const tier = req.subscription.tier;
+    const searchLimits = CONFIG.search?.limits?.[tier] || CONFIG.search?.limits?.free || {};
+
     res.json({
       month: currentMonth,
-      tier: req.subscription.tier,
+      tier,
       quota: {
         used,
         limit: limit === Infinity ? null : limit,
@@ -257,11 +275,41 @@ router.get('/usage', (req, res) => {
           tokens: row.total_tokens
         };
         return acc;
-      }, {})
+      }, {}),
+      search: {
+        used: searchToday?.used || 0,
+        dailyLimit: searchLimits.maxSearchesPerDay || 20,
+        costCents: searchMonthly?.costCents || 0,
+        monthlyCostLimitCents: searchLimits.maxCostPerMonthCents || 100
+      }
     });
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Get usage error');
     res.status(500).json({ error: 'Failed to get usage' });
+  }
+});
+
+// GET /api/user/usage/daily - Daily usage breakdown for last 30 days
+router.get('/usage/daily', (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 90);
+
+    const dailyStmt = db.prepare(`
+      SELECT
+        date(created_at) as date,
+        COUNT(*) as requests,
+        COALESCE(SUM(total_tokens), 0) as tokens
+      FROM llm_usage
+      WHERE user_id = ? AND created_at > datetime('now', '-' || ? || ' days')
+      GROUP BY date(created_at)
+      ORDER BY date(created_at)
+    `);
+    const daily = dailyStmt.all(req.user.id, days);
+
+    res.json({ daily });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Get daily usage error');
+    res.status(500).json({ error: 'Failed to get daily usage' });
   }
 });
 
@@ -275,7 +323,9 @@ router.get('/quota', async (req, res) => {
       limit: quota.limit,
       used: quota.used,
       remaining: quota.remaining,
-      resetsAt: quota.resetsAt
+      resetsAt: quota.resetsAt,
+      burnRate: quota.burnRate || undefined,
+      estimatedDaysRemaining: quota.estimatedDaysRemaining ?? undefined
     });
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Get user quota error');

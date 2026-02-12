@@ -420,6 +420,102 @@ function runMigrations() {
         console.log('Migration: Created prompt A/B testing tables');
       }
     },
+    // Create billing_events audit table
+    {
+      name: 'create_billing_events',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='billing_events'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS billing_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stripe_event_id TEXT UNIQUE NOT NULL,
+            event_type TEXT NOT NULL,
+            user_id INTEGER,
+            stripe_customer_id TEXT,
+            data_summary TEXT,
+            processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_billing_events_user ON billing_events(user_id);
+          CREATE INDEX IF NOT EXISTS idx_billing_events_type ON billing_events(event_type);
+        `);
+        console.log('Migration: Created billing_events audit table');
+      }
+    },
+    // Create archived_users table
+    {
+      name: 'create_archived_users',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='archived_users'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS archived_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_user_id INTEGER NOT NULL,
+            email_hash TEXT NOT NULL,
+            tier TEXT,
+            total_requests INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            total_cost_cents INTEGER DEFAULT 0,
+            subscription_history TEXT,
+            account_created_at DATETIME,
+            deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+        console.log('Migration: Created archived_users table');
+      }
+    },
+    // Create document sharing tables
+    {
+      name: 'create_document_sharing_tables',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='document_shares'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS document_shares (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            link_token TEXT UNIQUE,
+            link_permission TEXT NOT NULL DEFAULT 'view',
+            link_enabled INTEGER NOT NULL DEFAULT 0,
+            allow_copy INTEGER NOT NULL DEFAULT 1,
+            expires_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE,
+            FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+          );
+
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_document_shares_document ON document_shares(document_id);
+          CREATE INDEX IF NOT EXISTS idx_document_shares_link_token ON document_shares(link_token) WHERE link_token IS NOT NULL;
+
+          CREATE TABLE IF NOT EXISTS document_access (
+            id TEXT PRIMARY KEY,
+            share_id TEXT NOT NULL,
+            user_id INTEGER,
+            email TEXT NOT NULL,
+            permission TEXT NOT NULL DEFAULT 'view',
+            accepted_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (share_id) REFERENCES document_shares(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(share_id, email)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_document_access_user ON document_access(user_id);
+          CREATE INDEX IF NOT EXISTS idx_document_access_share ON document_access(share_id);
+        `);
+        console.log('Migration: Created document sharing tables (document_shares, document_access)');
+      }
+    },
   ];
 
   for (const migration of migrations) {

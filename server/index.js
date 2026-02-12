@@ -21,10 +21,10 @@ import syncRouter from './routes/sync.js';
 import marketplaceRouter from './routes/marketplace.js';
 import ragRouter from './routes/rag.js';
 import promptsRouter from './routes/prompts.js';
+import shareRouter from './routes/share.js';
 import { configurePassport } from './config/passport.js';
-import { cleanupExpiredSessions, cleanupExpiredOAuthStates, cleanupExpiredCodes, cleanupExpiredPasswordResetTokens, cleanupExpiredEmailVerificationTokens } from './services/tokenService.js';
-import { cleanupOldAuthEvents } from './services/auditService.js';
 import db from './db/index.js';
+import { startCleanupService } from './services/cleanupService.js';
 import { getProviderStatus } from './services/llm/index.js';
 import {
   errorHandler,
@@ -72,7 +72,7 @@ const corsOptions = {
   origin: allowedOrigins,
   credentials: true, // Allow cookies
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token', 'X-Share-Token']
 };
 
 // Middleware
@@ -97,6 +97,8 @@ app.use('/api/llm', express.json({ limit: CONFIG.requestLimits.llm }));
 app.use('/api/error-report', express.json({ limit: CONFIG.requestLimits.errorReport }));
 // Sync requests can include full document content
 app.use('/api/sync', express.json({ limit: CONFIG.requestLimits.sync }));
+// Share requests can include document content (for collaborative edits)
+app.use('/api/share', express.json({ limit: '5mb' }));
 // Default for all other routes - smaller to prevent abuse
 app.use(express.json({ limit: CONFIG.requestLimits.json }));
 app.use(cookieParser());
@@ -155,6 +157,7 @@ app.use('/api/llm', conditionalCsrf);
 app.use('/api/subscription', conditionalCsrf);
 app.use('/api/sync', conditionalCsrf);
 app.use('/api/marketplace', conditionalCsrf);
+app.use('/api/share', conditionalCsrf);
 app.use('/api/rag', conditionalCsrf);
 
 // CSRF token endpoint for web clients
@@ -266,6 +269,7 @@ app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/subscription', subscriptionRouter);
 app.use('/api/sync', syncRouter);
+app.use('/api/share', shareRouter);
 app.use('/api/marketplace', marketplaceRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/prompts', promptsRouter);
@@ -283,56 +287,14 @@ app.use(errorHandler);             // Global error handler
 // Setup process-level error handlers
 setupProcessErrorHandlers();
 
-// Cleanup expired tokens and sessions periodically (every hour)
-setInterval(() => {
-  try {
-    const sessions = cleanupExpiredSessions();
-    const oauthStates = cleanupExpiredOAuthStates();
-    const codes = cleanupExpiredCodes();
-    const resetTokens = cleanupExpiredPasswordResetTokens();
-    const verificationTokens = cleanupExpiredEmailVerificationTokens();
-    const totalChanges = sessions.changes + oauthStates.changes + codes.changes + resetTokens.changes + verificationTokens.changes;
-    if (totalChanges > 0) {
-      logger.info({
-        sessionsRemoved: sessions.changes,
-        oauthStatesRemoved: oauthStates.changes,
-        codesRemoved: codes.changes,
-        resetTokensRemoved: resetTokens.changes,
-        verificationTokensRemoved: verificationTokens.changes
-      }, 'Cleaned up expired tokens');
-    }
-  } catch (error) {
-    logger.error({ error: error.message }, 'Token cleanup error');
-  }
-}, 60 * 60 * 1000);
-
-// Cleanup old error reports and alert history (daily, 90-day retention)
-setInterval(() => {
-  try {
-    const reports = db.prepare(
-      "DELETE FROM error_reports WHERE received_at < datetime('now', '-90 days')"
-    ).run();
-    const alerts = db.prepare(
-      "DELETE FROM alert_history WHERE triggered_at < datetime('now', '-90 days')"
-    ).run();
-    const authEvents = cleanupOldAuthEvents();
-    if (reports.changes > 0 || alerts.changes > 0 || authEvents.changes > 0) {
-      logger.info({
-        reportsRemoved: reports.changes,
-        alertsRemoved: alerts.changes,
-        authEventsRemoved: authEvents.changes
-      }, 'Cleaned up old error reports, alerts, and auth events');
-    }
-  } catch (error) {
-    logger.error({ error: error.message }, 'Error report cleanup error');
-  }
-}, 24 * 60 * 60 * 1000);
-
 app.listen(PORT, () => {
   const providers = getProviderStatus();
 
   // Start sync cleanup service (expired documents, resolved conflicts, old logs)
   startSyncCleanup();
+
+  // Start consolidated cleanup service (expired tokens, sessions, old audit data)
+  startCleanupService();
 
   logger.info({
     port: PORT,
