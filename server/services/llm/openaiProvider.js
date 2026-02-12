@@ -86,7 +86,8 @@ export async function chat({
   messages,
   temperature = 0.7,
   maxTokens = 4096,
-  stream = false
+  stream = false,
+  signal = null
 }) {
   const params = {
     model,
@@ -101,7 +102,7 @@ export async function chat({
   }
 
   if (stream) {
-    return streamChat(params);
+    return streamChat(params, signal);
   }
 
   const response = await client.chat.completions.create(params);
@@ -124,7 +125,7 @@ export async function chat({
   };
 }
 
-async function* streamChat(params) {
+async function* streamChat(params, signal = null) {
   const stream = await client.chat.completions.create(params);
 
   let totalContent = '';
@@ -132,6 +133,10 @@ async function* streamChat(params) {
   let completionTokens = 0;
 
   for await (const chunk of stream) {
+    if (signal?.aborted) {
+      stream.controller?.abort?.();
+      break;
+    }
     const delta = chunk.choices[0]?.delta;
 
     // Reasoning/thinking content (OpenAI reasoning models)
@@ -240,7 +245,8 @@ export async function* chatWithToolsStream({
   messages,
   tools,
   temperature = 0.7,
-  maxTokens = 4096
+  maxTokens = 4096,
+  signal = null
 }) {
   const params = {
     model,
@@ -271,6 +277,10 @@ export async function* chatWithToolsStream({
   let toolCallsStarted = false;
 
   for await (const chunk of stream) {
+    if (signal?.aborted) {
+      stream.controller?.abort?.();
+      break;
+    }
     const delta = chunk.choices[0]?.delta;
 
     // Reasoning/thinking content

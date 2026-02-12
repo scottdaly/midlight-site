@@ -16,12 +16,12 @@ export function configurePassport() {
       scope: ['profile', 'email']
     }, (accessToken, refreshToken, profile, done) => {
       try {
-        // Use verified email only — reject if no verified email found
+        // Only accept verified emails to prevent account takeover via unverified Google emails
         const verifiedEmail = profile.emails?.find(e => e.verified === true || e.verified === 'true');
-        const email = verifiedEmail?.value || profile.emails?.[0]?.value;
-        if (!email) {
-          return done(new Error('No email provided by Google'));
+        if (!verifiedEmail?.value) {
+          return done(null, false, { message: 'Google account email must be verified' });
         }
+        const email = verifiedEmail.value;
 
         const result = findOrCreateOAuthUser({
           provider: 'google',

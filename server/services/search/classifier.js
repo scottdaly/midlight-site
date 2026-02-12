@@ -231,5 +231,5 @@ export function getClassifierUsage() {
  * @returns {boolean}
  */
 export function isConfigured() {
-  return !!process.env.ANTHROPIC_API_KEY;
+  return !!process.env.OPENAI_API_KEY;
 }

@@ -120,7 +120,8 @@ export async function chat({
   messages,
   temperature = 0.7,
   maxTokens = 4096,
-  stream = false
+  stream = false,
+  signal = null
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
@@ -138,7 +139,7 @@ export async function chat({
   };
 
   if (stream) {
-    return streamChat(params);
+    return streamChat(params, signal);
   }
 
   const response = await client.messages.create(params);
@@ -168,14 +169,21 @@ export async function chat({
   };
 }
 
-async function* streamChat(params) {
+async function* streamChat(params, signal = null) {
   const stream = await client.messages.stream(params);
+
+  // Abort the stream when signal fires
+  if (signal) {
+    const onAbort = () => stream.abort();
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
 
   let totalContent = '';
   let promptTokens = 0;
   let completionTokens = 0;
 
   for await (const event of stream) {
+    if (signal?.aborted) break;
     if (event.type === 'content_block_delta') {
       if (event.delta.type === 'text_delta') {
         const delta = event.delta.text;
@@ -296,7 +304,8 @@ export async function* chatWithToolsStream({
   tools,
   temperature = 0.7,
   maxTokens = 4096,
-  webSearchEnabled = false
+  webSearchEnabled = false,
+  signal = null
 }) {
   const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
@@ -322,6 +331,12 @@ export async function* chatWithToolsStream({
 
   const stream = await client.messages.stream(params);
 
+  // Abort the stream when signal fires
+  if (signal) {
+    const onAbort = () => stream.abort();
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
   let promptTokens = 0;
   let completionTokens = 0;
   let currentToolCall = null;
@@ -333,6 +348,8 @@ export async function* chatWithToolsStream({
   let lastPreviewLength = 0;
 
   for await (const event of stream) {
+    if (signal?.aborted) break;
+
     if (event.type === 'message_start' && event.message?.usage) {
       promptTokens = event.message.usage.input_tokens;
     }

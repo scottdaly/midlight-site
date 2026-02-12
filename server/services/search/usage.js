@@ -155,8 +155,8 @@ export function checkSearchLimits(userId, limits) {
     return { allowed: true };
   } catch (error) {
     console.error('[SearchUsage] Limit check failed:', error.message);
-    // Fail open - allow search if check fails
-    return { allowed: true };
+    // Fail closed - deny search if check fails to prevent quota bypass
+    return { allowed: false, reason: 'search_temporarily_unavailable' };
   }
 }
 

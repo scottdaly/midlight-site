@@ -17,6 +17,7 @@ import {
 } from '../middleware/rateLimiters.js';
 import { checkQuota, getQuotaLimit, getResetsAt } from '../services/llm/quotaManager.js';
 import { CONFIG } from '../config/index.js';
+import { stripe } from '../config/stripe.js';
 import db from '../db/index.js';
 
 const router = Router();
@@ -134,7 +135,12 @@ router.patch('/me', [
 // POST /api/user/password - Change password
 router.post('/password', [
   body('currentPassword').notEmpty().withMessage('Current password required'),
-  body('newPassword').isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
+  body('newPassword')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number')
+    .matches(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/).withMessage('Password must contain at least one special character')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -373,8 +379,23 @@ router.delete('/sessions', (req, res) => {
 });
 
 // DELETE /api/user/me - Delete account
-router.delete('/me', (req, res) => {
+router.delete('/me', async (req, res) => {
   try {
+    // Cancel active Stripe subscription before deleting user
+    const subscription = db.prepare(
+      'SELECT stripe_subscription_id FROM subscriptions WHERE user_id = ? AND status IN (?, ?, ?)'
+    ).get(req.user.id, 'active', 'trialing', 'past_due');
+
+    if (subscription?.stripe_subscription_id && stripe) {
+      try {
+        await stripe.subscriptions.cancel(subscription.stripe_subscription_id);
+        logger.info({ userId: req.user.id, subscriptionId: subscription.stripe_subscription_id }, 'Cancelled Stripe subscription on account deletion');
+      } catch (err) {
+        logger.error({ error: err?.message, userId: req.user.id }, 'Failed to cancel Stripe subscription on account deletion');
+        // Don't block deletion — Stripe will eventually fail to renew
+      }
+    }
+
     // This will cascade delete oauth_accounts, subscriptions, llm_usage, sessions
     deleteUser(req.user.id);
     res.json({ success: true, message: 'Account deleted' });

@@ -16,6 +16,9 @@ import { logger } from '../utils/logger.js';
 
 const router = Router();
 
+// Valid request types that clients can specify (prevents spoofing exempt types like 'classification'/'compaction')
+const VALID_REQUEST_TYPES = new Set(['chat', 'chat-with-tools', 'agent', 'inline-edit', 'workflow']);
+
 // All LLM routes require authentication
 router.use(requireAuth);
 router.use(attachSubscription);
@@ -70,6 +73,11 @@ router.post('/chat', chatValidation, async (req, res) => {
       promptVariant = null
     } = req.body;
 
+    // Validate requestType to prevent spoofing exempt billing types
+    if (!VALID_REQUEST_TYPES.has(requestType)) {
+      requestType = 'chat';
+    }
+
     // Check if model is allowed for user's tier
     const userTier = req.subscription?.tier || 'free';
     if (!isModelAllowed(model, userTier)) {
@@ -90,6 +98,10 @@ router.post('/chat', chatValidation, async (req, res) => {
       res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
       res.flushHeaders();
 
+      // Abort LLM generation when client disconnects (saves tokens/money)
+      const abortController = new AbortController();
+      res.on('close', () => abortController.abort());
+
       try {
         const streamResponse = await chat({
           userId: req.user.id,
@@ -104,10 +116,12 @@ router.post('/chat', chatValidation, async (req, res) => {
           userTier,
           effortLane,
           promptVersion,
-          promptVariant
+          promptVariant,
+          signal: abortController.signal
         });
 
         for await (const chunk of streamResponse) {
+          if (abortController.signal.aborted) break;
           if (chunk.type === 'chunk') {
             res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
           } else if (chunk.type === 'thinking') {
@@ -120,9 +134,14 @@ router.post('/chat', chatValidation, async (req, res) => {
           }
         }
 
-        res.write('data: [DONE]\n\n');
+        if (!abortController.signal.aborted) {
+          res.write('data: [DONE]\n\n');
+        }
         res.end();
       } catch (error) {
+        if (abortController.signal.aborted) {
+          return res.end();
+        }
         if (error.code === 'QUOTA_EXCEEDED') {
           res.write(`data: ${JSON.stringify({ error: 'quota_exceeded', quota: error.quota })}\n\n`);
         } else {
@@ -213,6 +232,10 @@ router.post('/chat-with-tools', [
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
 
+      // Abort LLM generation when client disconnects (saves tokens/money)
+      const abortController = new AbortController();
+      res.on('close', () => abortController.abort());
+
       try {
         const reqStart = Date.now();
         logger.debug({ provider, model }, 'chat-with-tools stream request');
@@ -228,12 +251,14 @@ router.post('/chat-with-tools', [
           userTier,
           effortLane,
           promptVersion,
-          promptVariant
+          promptVariant,
+          signal: abortController.signal
         });
         logger.debug({ durationMs: Date.now() - reqStart }, 'Stream setup complete');
 
         let firstChunkSent = false;
         for await (const chunk of streamResult.stream) {
+          if (abortController.signal.aborted) break;
           if (!firstChunkSent) {
             logger.debug({ durationMs: Date.now() - reqStart, type: chunk.type }, 'First chunk to client');
             firstChunkSent = true;
@@ -257,9 +282,14 @@ router.post('/chat-with-tools', [
           }
         }
 
-        res.write('data: [DONE]\n\n');
+        if (!abortController.signal.aborted) {
+          res.write('data: [DONE]\n\n');
+        }
         res.end();
       } catch (error) {
+        if (abortController.signal.aborted) {
+          return res.end();
+        }
         if (error.code === 'QUOTA_EXCEEDED') {
           res.write(`data: ${JSON.stringify({ type: 'error', error: 'quota_exceeded', quota: error.quota })}\n\n`);
         } else {

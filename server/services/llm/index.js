@@ -116,7 +116,8 @@ export async function chat({
   userTier = 'free',
   effortLane = null,
   promptVersion = null,
-  promptVariant = null
+  promptVariant = null,
+  signal = null
 }) {
   // Check quota
   const quota = await checkQuota(userId);
@@ -155,7 +156,8 @@ export async function chat({
       providerService,
       effortLane,
       promptVersion,
-      promptVariant
+      promptVariant,
+      signal
     });
   }
 
@@ -184,14 +186,16 @@ async function* streamWithTracking({
   providerService,
   effortLane = null,
   promptVersion = null,
-  promptVariant = null
+  promptVariant = null,
+  signal = null
 }) {
   const stream = await providerService.chat({
     model,
     messages,
     temperature,
     maxTokens,
-    stream: true
+    stream: true,
+    signal
   });
 
   let finalUsage = null;
@@ -304,7 +308,8 @@ export async function chatWithToolsStream({
   userTier = 'free',
   effortLane = null,
   promptVersion = null,
-  promptVariant = null
+  promptVariant = null,
+  signal = null
 }) {
   const t0 = Date.now();
 
@@ -372,7 +377,8 @@ export async function chatWithToolsStream({
     tools,
     temperature,
     maxTokens,
-    webSearchEnabled: false
+    webSearchEnabled: false,
+    signal
   });
 
   async function* streamWithTracking() {

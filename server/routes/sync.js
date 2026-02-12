@@ -108,7 +108,7 @@ function updateSyncUsage(userId, sizeDelta) {
     VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(user_id) DO UPDATE SET
       document_count = (SELECT COUNT(*) FROM sync_documents WHERE user_id = ? AND deleted_at IS NULL),
-      total_size_bytes = total_size_bytes + ?,
+      total_size_bytes = MAX(0, total_size_bytes + ?),
       last_sync_at = CURRENT_TIMESTAMP,
       updated_at = CURRENT_TIMESTAMP
   `).run(userId, Math.max(0, sizeDelta), userId, sizeDelta);

@@ -124,7 +124,8 @@ export async function chat({
   messages,
   temperature = 0.7,
   maxTokens = 4096,
-  stream = false
+  stream = false,
+  signal = null
 }) {
   const apiModel = MODEL_ID_MAP[model] || model;
 
@@ -141,7 +142,7 @@ export async function chat({
   };
 
   if (stream) {
-    return streamChat(params, model);
+    return streamChat(params, model, signal);
   }
 
   return withFallback(async (client, source) => {
@@ -170,7 +171,7 @@ export async function chat({
   });
 }
 
-async function* streamChat(params, originalModel) {
+async function* streamChat(params, originalModel, signal = null) {
   // For streaming, we need to handle fallback differently
   // Try NVIDIA first, if it fails on connection, try Together
   let client = nvidiaClient;
@@ -207,6 +208,10 @@ async function* streamChat(params, originalModel) {
   let completionTokens = 0;
 
   for await (const chunk of stream) {
+    if (signal?.aborted) {
+      stream.controller?.abort?.();
+      break;
+    }
     const delta = chunk.choices[0]?.delta;
 
     // Thinking/reasoning content (OpenAI-compatible thinking models)
@@ -318,7 +323,8 @@ export async function* chatWithToolsStream({
   tools,
   temperature = 0.7,
   maxTokens = 4096,
-  webSearchEnabled = false
+  webSearchEnabled = false,
+  signal = null
 }) {
   const apiModel = MODEL_ID_MAP[model] || model;
   const isThinking = THINKING_MODELS.has(model);
@@ -377,6 +383,10 @@ export async function* chatWithToolsStream({
   let toolCallsStarted = false;
 
   for await (const chunk of stream) {
+    if (signal?.aborted) {
+      stream.controller?.abort?.();
+      break;
+    }
     if (!firstChunkLogged) {
       console.log(`[Kimi] First chunk received: ${Date.now() - streamStart}ms after stream start (type: ${chunk.choices[0]?.delta?.reasoning_content ? 'thinking' : chunk.choices[0]?.delta?.content ? 'content' : chunk.choices[0]?.delta?.tool_calls ? 'tool_call' : 'other'})`);
       firstChunkLogged = true;

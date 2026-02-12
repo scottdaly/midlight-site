@@ -146,7 +146,8 @@ export async function chat({
   messages,
   temperature = 0.7,
   maxTokens = 4096,
-  stream = false
+  stream = false,
+  signal = null
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
@@ -163,7 +164,7 @@ export async function chat({
   });
 
   if (stream) {
-    return streamChat(generativeModel, contents);
+    return streamChat(generativeModel, contents, signal);
   }
 
   const result = await generativeModel.generateContent({ contents });
@@ -203,7 +204,7 @@ export async function chat({
   };
 }
 
-async function* streamChat(generativeModel, contents) {
+async function* streamChat(generativeModel, contents, signal = null) {
   const result = await generativeModel.generateContentStream({ contents });
 
   let totalContent = '';
@@ -212,6 +213,7 @@ async function* streamChat(generativeModel, contents) {
   let finishReason = 'stop';
 
   for await (const chunk of result.stream) {
+    if (signal?.aborted) break;
     const parts = chunk.candidates?.[0]?.content?.parts;
     if (parts) {
       for (const part of parts) {
@@ -342,7 +344,8 @@ export async function* chatWithToolsStream({
   messages,
   tools,
   temperature = 0.7,
-  maxTokens = 4096
+  maxTokens = 4096,
+  signal = null
 }) {
   const { systemInstruction, contents } = convertMessages(messages);
   const geminiTools = convertTools(tools);
@@ -376,6 +379,7 @@ export async function* chatWithToolsStream({
   let finishReason = 'stop';
 
   for await (const chunk of result.stream) {
+    if (signal?.aborted) break;
     const candidate = chunk.candidates?.[0];
     const parts = candidate?.content?.parts;
 

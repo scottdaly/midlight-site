@@ -55,6 +55,27 @@ const router = Router();
 const DESKTOP_REDIRECT_BASE = process.env.DESKTOP_REDIRECT_BASE || 'midlight://auth/callback';
 const WEB_REDIRECT_BASE = process.env.WEB_REDIRECT_BASE || 'http://localhost:5173';
 
+// Escape HTML special characters to prevent XSS in rendered pages
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Escape a string for safe use inside a JavaScript single-quoted string literal
+function escapeJsString(str) {
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/</g, '\\x3c')
+    .replace(/>/g, '\\x3e')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
+
 // Helper to render desktop OAuth callback page
 // This page opens the protocol handler and attempts to close the browser tab
 function renderDesktopCallbackPage(res, { success, code, error }) {
@@ -62,11 +83,15 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
     ? `${DESKTOP_REDIRECT_BASE}?code=${code}`
     : `${DESKTOP_REDIRECT_BASE}?error=${error || 'auth_failed'}`;
 
+  const escapedUrl = escapeHtml(protocolUrl);
+  const jsEscapedUrl = escapeJsString(protocolUrl);
+  const escapedTitle = escapeHtml(success ? 'Opening Midlight...' : 'Authentication Failed');
+
   const html = `
     <!DOCTYPE html>
     <html>
       <head>
-        <title>${success ? 'Opening Midlight...' : 'Authentication Failed'} - Midlight</title>
+        <title>${escapedTitle} - Midlight</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -140,7 +165,7 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
           ${success ? `
             <h1>Opening Midlight...</h1>
             <p>You've signed in successfully. The app should open automatically.</p>
-            <a href="${protocolUrl}" class="btn">Open Midlight</a>
+            <a href="${escapedUrl}" class="btn">Open Midlight</a>
             <p class="status opening">Didn't work? Click the button above.</p>
           ` : `
             <svg class="icon-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -148,12 +173,12 @@ function renderDesktopCallbackPage(res, { success, code, error }) {
             </svg>
             <h1>Authentication Failed</h1>
             <p>Something went wrong during sign in. Please close this tab and try again in the app.</p>
-            <a href="${protocolUrl}" class="btn">Back to Midlight</a>
+            <a href="${escapedUrl}" class="btn">Back to Midlight</a>
           `}
         </div>
         <script>
           // Immediately try to open the protocol handler
-          window.location.href = '${protocolUrl}';
+          window.location.href = '${jsEscapedUrl}';
 
           // Try to close this tab after a delay (gives time for protocol to launch)
           setTimeout(function() {

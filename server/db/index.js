@@ -12,6 +12,21 @@ const dbPath = process.env.DB_PATH || path.join(__dirname, 'midlight_errors.db')
 
 const db = new Database(dbPath); // verbose: console.log
 
+// Enable WAL mode for better concurrent read performance during SSE streaming
+db.pragma('journal_mode = WAL');
+
+// Enable foreign key enforcement (SQLite disables this by default)
+// Must run before any migrations or schema setup
+db.pragma('foreign_keys = ON');
+
+// Verify foreign keys are enabled
+const fkStatus = db.pragma('foreign_keys');
+if (!fkStatus[0]?.foreign_keys) {
+  console.error('WARNING: Failed to enable SQLite foreign keys');
+} else {
+  console.log('SQLite foreign keys enabled');
+}
+
 // Run migrations for existing databases FIRST
 // These safely add columns that may not exist before schema indexes reference them
 function runMigrations() {
@@ -514,6 +529,25 @@ function runMigrations() {
           CREATE INDEX IF NOT EXISTS idx_document_access_share ON document_access(share_id);
         `);
         console.log('Migration: Created document sharing tables (document_shares, document_access)');
+      }
+    },
+    // Create yjs_documents table for collaborative editing
+    {
+      name: 'create_yjs_documents',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='yjs_documents'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS yjs_documents (
+            document_id TEXT PRIMARY KEY,
+            state BLOB NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES sync_documents(id) ON DELETE CASCADE
+          );
+        `);
+        console.log('Migration: Created yjs_documents table for collaborative editing');
       }
     },
   ];
