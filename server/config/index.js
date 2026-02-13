@@ -90,7 +90,9 @@ export const CONFIG = {
   // Request size limits (in bytes)
   requestLimits: {
     json: 10 * 1024, // 10KB default
-    llm: 1 * 1024 * 1024, // 1MB for LLM requests
+    // Supports multimodal chat with up to 5 x 5MB images.
+    // Base64 inflation (~33%) means payloads can exceed 33MB before prompt/context.
+    llm: 50 * 1024 * 1024, // 50MB for LLM requests
     errorReport: 100 * 1024, // 100KB for error reports
     sync: 5 * 1024 * 1024, // 5MB for document sync
   },

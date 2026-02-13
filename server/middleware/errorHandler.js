@@ -73,6 +73,14 @@ export function errorHandler(err, req, res, next) {
   let code = err.code || 'INTERNAL_ERROR';
   let message = err.message || 'Something went wrong';
 
+  // Body parser size errors are expected operational errors (e.g. large image attachments).
+  if (err?.type === 'entity.too.large' || err?.status === 413 || err?.statusCode === 413) {
+    statusCode = 413;
+    code = 'PAYLOAD_TOO_LARGE';
+    message = 'Request payload too large. Try fewer images or smaller files.';
+    err.isOperational = true;
+  }
+
   // Log error with context
   const errorLog = {
     error: message,
