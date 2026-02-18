@@ -132,6 +132,7 @@ app.use('/api', requestLogger);
 // Health check routes (no auth, no CSRF, no rate limiting)
 // Must be accessible to monitoring tools
 app.use(healthRouter);
+app.use('/api', healthRouter);
 
 // CSRF Protection
 // Native clients (desktop/mobile) are exempt because they rely on bearer tokens
