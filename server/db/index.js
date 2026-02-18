@@ -913,6 +913,83 @@ function runMigrations() {
         console.log('Migration: Added collaborative editing performance indexes');
       }
     },
+    // Add notification_channel and webhook_url to alert_rules
+    {
+      name: 'add_webhook_channels_to_alert_rules',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(alert_rules)").all();
+        return cols.some(c => c.name === 'notification_channel');
+      },
+      run: () => {
+        db.exec("ALTER TABLE alert_rules ADD COLUMN notification_channel TEXT DEFAULT 'email'");
+        db.exec("ALTER TABLE alert_rules ADD COLUMN webhook_url TEXT");
+        db.exec("ALTER TABLE alert_rules ADD COLUMN github_repo TEXT");
+        console.log('Migration: Added notification_channel, webhook_url, github_repo to alert_rules');
+      }
+    },
+    // Add github_issue_url to error_issues
+    {
+      name: 'add_github_issue_url_to_error_issues',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_issues)").all();
+        return cols.some(c => c.name === 'github_issue_url');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_issues ADD COLUMN github_issue_url TEXT");
+        console.log('Migration: Added github_issue_url to error_issues');
+      }
+    },
+    // Create performance_events table
+    {
+      name: 'create_performance_events_table',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='performance_events'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS performance_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            value REAL NOT NULL,
+            rating TEXT,
+            app_version TEXT,
+            platform TEXT,
+            user_hash TEXT,
+            session_id TEXT,
+            context TEXT,
+            received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_performance_events_type ON performance_events(event_type);
+          CREATE INDEX IF NOT EXISTS idx_performance_events_received ON performance_events(received_at);
+          CREATE INDEX IF NOT EXISTS idx_performance_events_metric ON performance_events(metric_name);
+        `);
+        console.log('Migration: Created performance_events table');
+      }
+    },
+    // Create session_snapshots table for session replay
+    {
+      name: 'create_session_snapshots_table',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='session_snapshots'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS session_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL REFERENCES error_reports(id) ON DELETE CASCADE,
+            snapshot_index INTEGER NOT NULL,
+            timestamp DATETIME NOT NULL,
+            trigger_reason TEXT,
+            snapshot_data TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_session_snapshots_report ON session_snapshots(report_id);
+        `);
+        console.log('Migration: Created session_snapshots table');
+      }
+    },
     // Add mobile notification delivery failure tracking fields
     {
       name: 'add_mobile_notification_delivery_fields',
@@ -945,14 +1022,63 @@ function runMigrations() {
           console.warn(`Skipping migration ${migration.name}: ${message}`);
           continue;
         }
-        throw error;
+        // Keep startup resilient even if one migration fails unexpectedly.
+        // A later schema pass can still create missing tables/indexes.
+        console.error(`Migration failed ${migration.name}: ${message}`);
+        continue;
       }
+    }
+  }
+}
+
+function hasTable(tableName) {
+  const rows = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+    .all(tableName);
+  return rows.length > 0;
+}
+
+function hasColumn(tableName, columnName) {
+  if (!hasTable(tableName)) return false;
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some((column) => column.name === columnName);
+}
+
+function ensureErrorReportsSchemaCompatibility() {
+  // Legacy databases may miss columns now referenced by schema indexes.
+  // Ensure these columns exist before executing schema.sql.
+  if (!hasTable('error_reports')) return;
+
+  const compatibilityColumns = [
+    {
+      column: 'issue_id',
+      sql: "ALTER TABLE error_reports ADD COLUMN issue_id INTEGER REFERENCES error_issues(id)",
+    },
+    { column: 'breadcrumbs', sql: "ALTER TABLE error_reports ADD COLUMN breadcrumbs TEXT" },
+    { column: 'symbolicated_stack', sql: "ALTER TABLE error_reports ADD COLUMN symbolicated_stack TEXT" },
+    { column: 'release_id', sql: "ALTER TABLE error_reports ADD COLUMN release_id INTEGER REFERENCES releases(id)" },
+  ];
+
+  for (const entry of compatibilityColumns) {
+    if (hasColumn('error_reports', entry.column)) {
+      continue;
+    }
+    try {
+      db.exec(entry.sql);
+      console.log(`Compatibility: Added ${entry.column} to error_reports`);
+    } catch (error) {
+      const message = String(error?.message || error);
+      if (message.includes('duplicate column name')) {
+        continue;
+      }
+      console.warn(`Compatibility: Failed adding ${entry.column} to error_reports: ${message}`);
     }
   }
 }
 
 // Run migrations first (for existing databases)
 runMigrations();
+ensureErrorReportsSchemaCompatibility();
 
 // Initialize Schema (CREATE TABLE IF NOT EXISTS won't modify existing tables)
 const schemaPath = path.join(__dirname, 'schema.sql');
