@@ -30,9 +30,13 @@ if (!fkStatus[0]?.foreign_keys) {
 // Run migrations for existing databases FIRST
 // These safely add columns that may not exist before schema indexes reference them
 function runMigrations() {
-  // Check if users table exists (if not, skip migrations - fresh install)
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").all();
-  if (tables.length === 0) {
+  // Skip migrations only for truly fresh installs (no app tables yet).
+  // Legacy/partial databases may miss `users` but still need column migrations.
+  const existingTables = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type='table' AND name NOT LIKE 'sqlite_%'
+  `).all();
+  if (existingTables.length === 0) {
     return; // Fresh install, schema.sql will create everything
   }
 
@@ -811,6 +815,48 @@ function runMigrations() {
         console.log('Migration: Created mobile_notification_devices table');
       }
     },
+    // Create releases table for source map management
+    {
+      name: 'create_releases_table',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='releases'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS releases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version TEXT UNIQUE NOT NULL,
+            platform TEXT NOT NULL,
+            commit_sha TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+
+          CREATE TABLE IF NOT EXISTS release_sourcemaps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+            file_path TEXT NOT NULL,
+            map_path TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(release_id, file_path)
+          );
+        `);
+        console.log('Migration: Created releases and release_sourcemaps tables');
+      }
+    },
+    // Add symbolicated_stack and release_id to error_reports
+    {
+      name: 'add_symbolicated_stack_to_error_reports',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_reports)").all();
+        return cols.some(c => c.name === 'symbolicated_stack');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_reports ADD COLUMN symbolicated_stack TEXT");
+        db.exec("ALTER TABLE error_reports ADD COLUMN release_id INTEGER REFERENCES releases(id)");
+        console.log('Migration: Added symbolicated_stack and release_id to error_reports table');
+      }
+    },
     // Add breadcrumbs column to error_reports
     {
       name: 'add_breadcrumbs_to_error_reports',
@@ -821,6 +867,35 @@ function runMigrations() {
       run: () => {
         db.exec("ALTER TABLE error_reports ADD COLUMN breadcrumbs TEXT");
         console.log('Migration: Added breadcrumbs to error_reports table');
+      }
+    },
+    // Phase 3: Add regression tracking to error_issues
+    {
+      name: 'add_regression_fields_to_error_issues',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_issues)").all();
+        return cols.some(c => c.name === 'regression_count');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_issues ADD COLUMN regression_count INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE error_issues ADD COLUMN last_regression_version TEXT");
+        db.exec("ALTER TABLE error_issues ADD COLUMN fingerprint_version INTEGER DEFAULT 1");
+        db.exec("ALTER TABLE error_issues ADD COLUMN affected_users INTEGER DEFAULT 0");
+        db.exec("ALTER TABLE error_issues ADD COLUMN affected_sessions INTEGER DEFAULT 0");
+        console.log('Migration: Added regression and user tracking fields to error_issues');
+      }
+    },
+    // Phase 3: Add user_hash to error_reports
+    {
+      name: 'add_user_hash_to_error_reports',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_reports)").all();
+        return cols.some(c => c.name === 'user_hash');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_reports ADD COLUMN user_hash TEXT");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_error_reports_user_hash ON error_reports(user_hash)");
+        console.log('Migration: Added user_hash to error_reports table');
       }
     },
     // Add performance indexes for collaborative editing
@@ -860,7 +935,18 @@ function runMigrations() {
 
   for (const migration of migrations) {
     if (!migration.check()) {
-      migration.run();
+      try {
+        migration.run();
+      } catch (error) {
+        const message = String(error?.message || error);
+        // Some legacy databases are partial and may not have every table.
+        // Missing-table and duplicate-column cases are safe to skip here.
+        if (message.includes('no such table') || message.includes('duplicate column name')) {
+          console.warn(`Skipping migration ${migration.name}: ${message}`);
+          continue;
+        }
+        throw error;
+      }
     }
   }
 }
