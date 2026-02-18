@@ -1,8 +1,20 @@
 import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+let client = null;
+
+function getClient() {
+  if (client) {
+    return client;
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OpenAI provider not configured: missing OPENAI_API_KEY');
+  }
+
+  client = new OpenAI({ apiKey });
+  return client;
+}
 
 // Model configuration - each model has its own tier
 // Users can access any model at or below their subscription tier
@@ -105,7 +117,7 @@ export async function chat({
     return streamChat(params, signal);
   }
 
-  const response = await client.chat.completions.create(params);
+  const response = await getClient().chat.completions.create(params);
 
   const message = response.choices[0]?.message;
   const thinkingContent = message?.reasoning_content || message?.reasoning || '';
@@ -126,7 +138,7 @@ export async function chat({
 }
 
 async function* streamChat(params, signal = null) {
-  const stream = await client.chat.completions.create(params);
+  const stream = await getClient().chat.completions.create(params);
 
   let totalContent = '';
   let promptTokens = 0;
@@ -205,7 +217,7 @@ export async function chatWithTools({
   // Note: Web search is now handled by unified Tavily service in services/search/
   // The webSearchEnabled parameter is kept for backwards compatibility but ignored
 
-  const response = await client.chat.completions.create(params);
+  const response = await getClient().chat.completions.create(params);
 
   const message = response.choices[0]?.message;
   const thinkingContent = message?.reasoning_content || message?.reasoning || '';
@@ -268,7 +280,7 @@ export async function* chatWithToolsStream({
     params.temperature = temperature;
   }
 
-  const stream = await client.chat.completions.create(params);
+  const stream = await getClient().chat.completions.create(params);
 
   let promptTokens = 0;
   let completionTokens = 0;
@@ -376,7 +388,7 @@ export async function embed(texts) {
   for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
     const batch = texts.slice(i, i + MAX_BATCH_SIZE);
 
-    const response = await client.embeddings.create({
+    const response = await getClient().embeddings.create({
       model: EMBEDDING_MODEL,
       input: batch,
       dimensions: EMBEDDING_DIMENSIONS
