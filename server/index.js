@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { timingSafeEqual } from 'crypto';
 import passport from 'passport';
 import reportsRouter from './routes/reports.js';
+import performanceRouter from './routes/performance.js';
 import authRouter from './routes/auth.js';
 import userRouter from './routes/user.js';
 import llmRouter from './routes/llm.js';
@@ -83,7 +84,18 @@ const corsOptions = {
   origin: allowedOrigins,
   credentials: true, // Allow cookies
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type', 'X-CSRF-Token', 'X-Share-Token']
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Client-Type',
+    'X-CSRF-Token',
+    'X-Share-Token',
+    'X-Midlight-Client',
+    'X-Midlight-Platform',
+    'X-Midlight-App-Version',
+    'X-Midlight-Build-Channel',
+    'X-Midlight-Network-State',
+  ]
 };
 
 // Middleware
@@ -123,8 +135,9 @@ app.use('/api', requestLogger);
 app.use(healthRouter);
 
 // CSRF Protection
-// Desktop app is exempt (identified by X-Client-Type header)
-// Web clients must include CSRF token in requests
+// Native clients (desktop/mobile) are exempt because they rely on bearer tokens
+// instead of browser cookies.
+// Web clients must include CSRF token in state-changing requests.
 const csrfProtection = csrf({
   cookie: {
     httpOnly: true,
@@ -135,15 +148,21 @@ const csrfProtection = csrf({
 
 // Middleware to conditionally apply CSRF protection
 const conditionalCsrf = (req, res, next) => {
-  // Desktop clients must use Bearer token authentication (prevents CSRF bypass via header spoofing)
-  if (req.headers['x-client-type'] === 'desktop') {
+  const legacyClientType = String(req.headers['x-client-type'] || '').toLowerCase();
+  const midlightClient = String(req.headers['x-midlight-client'] || req.body?.client || '').toLowerCase();
+  const midlightPlatform = String(req.headers['x-midlight-platform'] || req.body?.platform || '').toLowerCase();
+  const isNativeClient = legacyClientType === 'desktop'
+    || ['desktop', 'ios', 'android', 'mobile', 'native'].includes(midlightClient)
+    || ['ios', 'android'].includes(midlightPlatform);
+
+  // Native clients must use Bearer auth on non-auth routes (prevents spoofed bypass).
+  if (isNativeClient) {
     const authHeader = req.headers.authorization;
-    // Allow desktop requests only if they have a Bearer token OR are auth routes
-    // (auth routes don't have tokens yet - user is logging in)
+    // Auth routes are allowed without bearer (login/exchange/bootstrap flows).
     const isAuthRoute = req.baseUrl === '/api/auth' || req.path.startsWith('/auth');
     if (!isAuthRoute && (!authHeader || !authHeader.startsWith('Bearer '))) {
       return res.status(401).json({
-        error: 'Desktop clients must use Bearer token authentication'
+        error: 'Native clients must use Bearer token authentication'
       });
     }
     return next();
@@ -281,6 +300,7 @@ app.use('/api/admin', adminLimiter, basicAuth);
 
 // API Routes
 app.use('/api', reportsRouter);
+app.use('/api/perf-report', performanceRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
