@@ -11,7 +11,6 @@ import { fileURLToPath } from 'url';
 import { timingSafeEqual } from 'crypto';
 import passport from 'passport';
 import reportsRouter from './routes/reports.js';
-import performanceRouter from './routes/performance.js';
 import authRouter from './routes/auth.js';
 import userRouter from './routes/user.js';
 import llmRouter from './routes/llm.js';
@@ -300,7 +299,6 @@ app.use('/api/admin', adminLimiter, basicAuth);
 
 // API Routes
 app.use('/api', reportsRouter);
-app.use('/api/perf-report', performanceRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/user', userRouter);
 app.use('/api/llm', llmRouter);
