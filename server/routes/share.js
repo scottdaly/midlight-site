@@ -14,12 +14,69 @@ import { requireAuth, optionalAuth, requirePro } from '../middleware/auth.js';
 import { requireOwner } from '../middleware/shareAuth.js';
 import { shareLimiter } from '../middleware/shareLimiter.js';
 import { findUserByEmail } from '../services/authService.js';
+import { verifyAccessToken } from '../services/tokenService.js';
 import { downloadDocument, uploadDocument } from '../services/storageService.js';
 import { sendShareInvitationEmail } from '../services/emailService.js';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
 
 const WEB_REDIRECT_BASE = process.env.WEB_REDIRECT_BASE || 'http://localhost:5173';
+const MOBILE_DEEP_LINK_BASE = process.env.MOBILE_DEEP_LINK_BASE || 'midlight://s';
+
+function buildMobileShareUrl(token) {
+  const normalizedBase = MOBILE_DEEP_LINK_BASE.replace(/\/+$/, '');
+  return `${normalizedBase}/${encodeURIComponent(token)}`;
+}
+
+function resolveShareWriteActor({ authorizationHeader, database = db }) {
+  if (!authorizationHeader?.startsWith('Bearer ')) {
+    return null;
+  }
+
+  const token = authorizationHeader.slice(7);
+  const payload = verifyAccessToken(token);
+  if (!payload) {
+    return null;
+  }
+
+  if (payload.userId) {
+    const user = database.prepare(
+      'SELECT id, email, display_name, avatar_url FROM users WHERE id = ?'
+    ).get(payload.userId);
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      type: 'user',
+      userId: user.id,
+    };
+  }
+
+  if (payload.guestSessionId) {
+    const guestSession = database.prepare(`
+      SELECT id, document_id, share_id, display_name, permission, expires_at
+      FROM guest_sessions
+      WHERE id = ? AND expires_at > datetime('now')
+    `).get(payload.guestSessionId);
+
+    if (!guestSession) {
+      return null;
+    }
+
+    database.prepare('UPDATE guest_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(payload.guestSessionId);
+
+    return {
+      type: 'guest',
+      guestSession,
+    };
+  }
+
+  return null;
+}
 
 // Apply rate limiter to all share routes
 router.use(shareLimiter);
@@ -170,7 +227,7 @@ router.get('/link/:token/content', optionalAuth, async (req, res) => {
  * PUT /api/share/link/:token/content
  * Save edits to a shared document via link (edit permission required)
  */
-router.put('/link/:token/content', requireAuth, [
+router.put('/link/:token/content', optionalAuth, [
   body('content').notEmpty().withMessage('Content required'),
   body('sidecar').optional({ nullable: true }),
   body('baseVersion').optional().isInt({ min: 0 }),
@@ -182,6 +239,14 @@ router.put('/link/:token/content', requireAuth, [
     }
 
     const { token } = req.params;
+    const actor = resolveShareWriteActor({
+      authorizationHeader: req.headers.authorization,
+      database: db,
+    });
+
+    if (!actor) {
+      return res.status(401).json({ error: 'Authorization required' });
+    }
 
     const share = db.prepare(`
       SELECT ds.*, sd.user_id AS doc_owner_id, sd.version AS doc_version
@@ -200,6 +265,16 @@ router.put('/link/:token/content', requireAuth, [
 
     if (share.link_permission !== 'edit') {
       return res.status(403).json({ error: 'Edit permission required' });
+    }
+
+    if (actor.type === 'guest') {
+      if (actor.guestSession.document_id !== share.document_id) {
+        return res.status(403).json({ error: 'Guest session does not match this document' });
+      }
+
+      if (actor.guestSession.permission !== 'edit') {
+        return res.status(403).json({ error: 'Guest session does not allow editing' });
+      }
     }
 
     // Version conflict detection (if client sends baseVersion)
@@ -236,6 +311,10 @@ router.put('/link/:token/content', requireAuth, [
     res.status(500).json({ error: 'Failed to save document' });
   }
 });
+
+export const __private = {
+  resolveShareWriteActor,
+};
 
 // ============================================================================
 // Guest Access
@@ -283,7 +362,6 @@ router.post('/link/:token/guest', [
     `).run(sessionId, share.document_id, share.id, displayName, share.link_permission, expiresAt);
 
     // Generate a guest JWT (1h, can be refreshed)
-    const jwt = require('jsonwebtoken');
     const secret = process.env.ACCESS_TOKEN_SECRET || 'dev-access-secret-change-in-production';
     const guestToken = jwt.sign(
       { guestSessionId: sessionId, documentId: share.document_id },
@@ -315,7 +393,6 @@ router.post('/link/:token/guest/refresh', (req, res) => {
       return res.status(401).json({ error: 'Guest token required' });
     }
 
-    const jwt = require('jsonwebtoken');
     const secret = process.env.ACCESS_TOKEN_SECRET || 'dev-access-secret-change-in-production';
     const oldToken = authHeader.slice(7);
 
@@ -622,11 +699,12 @@ router.post('/:docId/invite', requireAuth, requirePro, requireOwner, [
     const doc = db.prepare('SELECT path FROM sync_documents WHERE id = ?').get(docId);
     const documentTitle = doc?.path?.split('/').pop()?.replace(/\.\w+$/, '') || 'Untitled';
     const shareUrl = `${WEB_REDIRECT_BASE}/s/${share.link_token}`;
+    const mobileShareUrl = buildMobileShareUrl(share.link_token);
 
     // Send invitation email (await so we can report delivery status)
     let emailSent = true;
     try {
-      await sendShareInvitationEmail(email, req.user.display_name || req.user.email, documentTitle, shareUrl);
+      await sendShareInvitationEmail(email, req.user.display_name || req.user.email, documentTitle, shareUrl, mobileShareUrl);
     } catch (err) {
       logger.error({ error: err?.message, email }, 'Failed to send share invitation email');
       emailSent = false;

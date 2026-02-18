@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS error_reports (
   session_id TEXT,
   ip_hash TEXT,
   received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  issue_id INTEGER REFERENCES error_issues(id)  -- Link to aggregated issues
+  issue_id INTEGER REFERENCES error_issues(id),  -- Link to aggregated issues
+  breadcrumbs TEXT                                -- JSON array of breadcrumb events
 );
 
 CREATE INDEX IF NOT EXISTS idx_error_reports_category ON error_reports(category);
@@ -70,6 +71,28 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe ON subscriptions(stripe_subscription_id);
 CREATE INDEX IF NOT EXISTS idx_users_stripe ON users(stripe_customer_id);
+
+-- Mobile subscription receipt verification log (StoreKit / Play Billing)
+CREATE TABLE IF NOT EXISTS mobile_subscription_receipts (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,                  -- 'apple' | 'google'
+  provider_transaction_id TEXT NOT NULL,   -- original_transaction_id or purchaseToken
+  product_id TEXT NOT NULL,
+  app_account_token TEXT,
+  environment TEXT NOT NULL DEFAULT 'production',
+  expires_at DATETIME,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  raw_payload TEXT,
+  validated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(provider, provider_transaction_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_receipts_user ON mobile_subscription_receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_mobile_receipts_provider ON mobile_subscription_receipts(provider, provider_transaction_id);
 
 -- LLM Usage Tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -784,6 +807,30 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   digest_frequency TEXT DEFAULT 'instant',
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Native push token registry
+CREATE TABLE IF NOT EXISTS mobile_notification_devices (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,                  -- 'ios' | 'android'
+  device_token TEXT NOT NULL,
+  push_provider TEXT DEFAULT 'native',     -- 'apns' | 'fcm'
+  app_version TEXT,
+  build_channel TEXT,                      -- 'debug' | 'internal' | 'beta' | 'production'
+  locale TEXT,
+  timezone TEXT,
+  network_state TEXT,
+  delivery_failures INTEGER NOT NULL DEFAULT 0,
+  last_delivery_error TEXT,
+  last_delivery_error_at DATETIME,
+  last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(user_id, platform, device_token)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mobile_notification_devices_user ON mobile_notification_devices(user_id);
 
 -- ============================================================================
 -- SUGGESTIONS (Tracked Changes)

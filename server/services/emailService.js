@@ -253,12 +253,36 @@ Midlight - AI-Native Document Editor
 
 /**
  * Send share invitation email
- * @param {string} toEmail - Recipient email
  * @param {string} fromName - Sharer's display name or email
  * @param {string} documentTitle - Document title
  * @param {string} shareUrl - URL to access the shared document
+ * @param {string|null} nativeShareUrl - Optional native-app deep link
  */
-export async function sendShareInvitationEmail(toEmail, fromName, documentTitle, shareUrl) {
+export function buildShareInvitationEmailContent({ fromName, documentTitle, shareUrl, nativeShareUrl = null }) {
+  const normalizedFromName = (fromName || 'Someone').trim() || 'Someone';
+  const normalizedDocumentTitle = (documentTitle || 'Untitled').trim() || 'Untitled';
+  const normalizedShareUrl = (shareUrl || '').trim();
+  const normalizedNativeShareUrl = nativeShareUrl ? nativeShareUrl.trim() : null;
+
+  const safeFromName = escapeHtml(normalizedFromName);
+  const safeDocumentTitle = escapeHtml(normalizedDocumentTitle);
+  const safeShareUrl = escapeHtml(normalizedShareUrl);
+  const safeNativeShareUrl = normalizedNativeShareUrl ? escapeHtml(normalizedNativeShareUrl) : null;
+
+  const subject = `${normalizedFromName} shared "${normalizedDocumentTitle}" with you`;
+  const nativeHtml = safeNativeShareUrl
+    ? `
+                    <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.6; color: #666666;">
+                      Prefer mobile? <a href="${safeNativeShareUrl}" style="color: #111111; text-decoration: underline;">Open in the Midlight app</a>
+                    </p>
+`
+    : '';
+  const nativeText = normalizedNativeShareUrl
+    ? `
+Open in the Midlight app: ${normalizedNativeShareUrl}
+`
+    : '';
+
   const html = `
     <!DOCTYPE html>
     <html>
@@ -279,17 +303,18 @@ export async function sendShareInvitationEmail(toEmail, fromName, documentTitle,
                       Hi,
                     </p>
                     <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.6; color: #333333;">
-                      <strong>${fromName}</strong> shared "${documentTitle}" with you on Midlight.
+                      <strong>${safeFromName}</strong> shared "${safeDocumentTitle}" with you on Midlight.
                     </p>
                     <table width="100%" cellpadding="0" cellspacing="0">
                       <tr>
                         <td align="center" style="padding: 8px 0 32px 0;">
-                          <a href="${shareUrl}" style="display: inline-block; padding: 14px 32px; background-color: #111111; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 500;">
+                          <a href="${safeShareUrl}" style="display: inline-block; padding: 14px 32px; background-color: #111111; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 500;">
                             Open Document
                           </a>
                         </td>
                       </tr>
                     </table>
+${nativeHtml}
                     <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.6; color: #666666;">
                       If you don't have a Midlight account yet, you'll be able to sign up and access the document.
                     </p>
@@ -298,7 +323,7 @@ export async function sendShareInvitationEmail(toEmail, fromName, documentTitle,
                       If the button doesn't work, copy and paste this link into your browser:
                     </p>
                     <p style="margin: 8px 0 0 0; font-size: 12px; color: #999999; word-break: break-all;">
-                      ${shareUrl}
+                      ${safeShareUrl}
                     </p>
                   </td>
                 </tr>
@@ -316,9 +341,10 @@ export async function sendShareInvitationEmail(toEmail, fromName, documentTitle,
   const text = `
 Hi,
 
-${fromName} shared "${documentTitle}" with you on Midlight.
+${normalizedFromName} shared "${normalizedDocumentTitle}" with you on Midlight.
 
-Open the document: ${shareUrl}
+Open the document: ${normalizedShareUrl}
+${nativeText}
 
 If you don't have a Midlight account yet, you'll be able to sign up and access the document.
 
@@ -326,11 +352,28 @@ If you don't have a Midlight account yet, you'll be able to sign up and access t
 Midlight - AI-Native Document Editor
   `.trim();
 
+  return {
+    subject,
+    html,
+    text,
+  };
+}
+
+/**
+ * Send share invitation email
+ * @param {string} toEmail - Recipient email
+ * @param {string} fromName - Sharer's display name or email
+ * @param {string} documentTitle - Document title
+ * @param {string} shareUrl - URL to access the shared document
+ * @param {string|null} nativeShareUrl - Optional native-app deep link
+ */
+export async function sendShareInvitationEmail(toEmail, fromName, documentTitle, shareUrl, nativeShareUrl = null) {
+  const content = buildShareInvitationEmailContent({ fromName, documentTitle, shareUrl, nativeShareUrl });
   return sendEmail({
     to: toEmail,
-    subject: `${fromName} shared "${documentTitle}" with you`,
-    html,
-    text
+    subject: content.subject,
+    html: content.html,
+    text: content.text
   });
 }
 

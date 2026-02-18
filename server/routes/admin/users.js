@@ -203,4 +203,39 @@ router.get('/:id', (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/admin/users/:id/subscription
+ * Set a user's subscription tier (for E2E testing)
+ */
+router.patch('/:id/subscription', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tier, status = 'active' } = req.body;
+
+    if (!tier || !['free', 'pro', 'premium'].includes(tier)) {
+      return res.status(400).json({ error: 'Invalid tier. Must be free, pro, or premium.' });
+    }
+
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const existing = db.prepare('SELECT user_id FROM subscriptions WHERE user_id = ?').get(id);
+
+    if (existing) {
+      db.prepare('UPDATE subscriptions SET tier = ?, status = ? WHERE user_id = ?').run(tier, status, id);
+    } else {
+      db.prepare(
+        'INSERT INTO subscriptions (user_id, tier, status) VALUES (?, ?, ?)'
+      ).run(id, tier, status);
+    }
+
+    res.json({ success: true, tier, status });
+  } catch (err) {
+    logger.error({ error: err?.message || err }, 'Error setting subscription');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;

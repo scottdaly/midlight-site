@@ -7,6 +7,10 @@ import {
   createPortalSession,
   getSubscriptionStatus,
 } from '../services/subscriptionService.js';
+import {
+  verifyAppleMobileSubscription,
+  verifyGoogleMobileSubscription,
+} from '../services/mobileBillingService.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -141,6 +145,76 @@ router.post(
     }
   }
 );
+
+const mobileAppleValidation = [
+  body('productId').isString().trim().notEmpty().withMessage('productId is required'),
+  body('transactionId').optional().isString(),
+  body('originalTransactionId').optional().isString(),
+  body('appAccountToken').optional().isString(),
+  body('environment').optional().isIn(['sandbox', 'production']),
+  body('expiresAt').optional().isISO8601().withMessage('expiresAt must be an ISO date'),
+  body().custom((value) => {
+    if (!value.transactionId && !value.originalTransactionId) {
+      throw new Error('transactionId or originalTransactionId is required');
+    }
+    return true;
+  }),
+];
+
+const mobileGoogleValidation = [
+  body('productId').isString().trim().notEmpty().withMessage('productId is required'),
+  body('purchaseToken').isString().trim().notEmpty().withMessage('purchaseToken is required'),
+  body('packageName').isString().trim().notEmpty().withMessage('packageName is required'),
+  body('appAccountToken').optional().isString(),
+  body('environment').optional().isIn(['sandbox', 'production']),
+  body('expiresAt').optional().isISO8601().withMessage('expiresAt must be an ISO date'),
+];
+
+/**
+ * POST /api/subscription/mobile/apple/verify
+ * Verify StoreKit transaction payload and update entitlement.
+ */
+router.post('/mobile/apple/verify', requireAuth, mobileAppleValidation, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    const result = await verifyAppleMobileSubscription({
+      userId: req.user.id,
+      body: req.body,
+    });
+    res.json({ success: true, entitlement: result });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Error verifying Apple mobile subscription');
+    const status = Number(error?.status) || 500;
+    res.status(status).json({ error: error?.message || 'Failed to verify Apple subscription' });
+  }
+});
+
+/**
+ * POST /api/subscription/mobile/google/verify
+ * Verify Play Billing token payload and update entitlement.
+ */
+router.post('/mobile/google/verify', requireAuth, mobileGoogleValidation, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    const result = await verifyGoogleMobileSubscription({
+      userId: req.user.id,
+      body: req.body,
+    });
+    res.json({ success: true, entitlement: result });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'Error verifying Google mobile subscription');
+    const status = Number(error?.status) || 500;
+    res.status(status).json({ error: error?.message || 'Failed to verify Google subscription' });
+  }
+});
 
 /**
  * GET /api/subscription/prices

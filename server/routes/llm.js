@@ -74,9 +74,7 @@ router.post('/chat', chatValidation, async (req, res) => {
     } = req.body;
 
     // Validate requestType to prevent spoofing exempt billing types
-    if (!VALID_REQUEST_TYPES.has(requestType)) {
-      requestType = 'chat';
-    }
+    const normalizedRequestType = VALID_REQUEST_TYPES.has(requestType) ? requestType : 'chat';
 
     // Check if model is allowed for user's tier
     const userTier = req.subscription?.tier || 'free';
@@ -111,7 +109,7 @@ router.post('/chat', chatValidation, async (req, res) => {
           temperature,
           maxTokens,
           stream: true,
-          requestType,
+          requestType: normalizedRequestType,
           webSearchEnabled,
           userTier,
           effortLane,
@@ -159,7 +157,7 @@ router.post('/chat', chatValidation, async (req, res) => {
         temperature,
         maxTokens,
         stream: false,
-        requestType,
+        requestType: normalizedRequestType,
         webSearchEnabled,
         userTier,
         effortLane,
@@ -180,6 +178,85 @@ router.post('/chat', chatValidation, async (req, res) => {
     }
 
     res.status(500).json({ error: 'Chat request failed' });
+  }
+});
+
+const workflowValidation = [
+  body('prompt').isString().trim().notEmpty().withMessage('Prompt is required'),
+  body('provider').optional().isIn(['openai', 'anthropic', 'gemini', 'kimi']),
+  body('model').optional().isString().trim().notEmpty(),
+  body('temperature').optional().isFloat({ min: 0, max: 2 }),
+  body('maxTokens').optional().isInt({ min: 1, max: 32000 }),
+  body('webSearchEnabled').optional().isBoolean(),
+  body('effortLane').optional().isIn(['quick', 'write', 'deep']),
+  body('promptVersion').optional().isString(),
+  body('promptVariant').optional().isString(),
+];
+
+// POST /api/llm/workflow - Convenience endpoint for workflow-style generations
+router.post('/workflow', workflowValidation, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const {
+      prompt,
+      provider = 'openai',
+      model = 'gpt-4.1-mini',
+      temperature = 0.5,
+      maxTokens = 4096,
+      webSearchEnabled = false,
+      effortLane = 'write',
+      promptVersion = null,
+      promptVariant = null,
+    } = req.body;
+
+    const messages = [{ role: 'user', content: prompt }];
+    const userTier = req.subscription?.tier || 'free';
+
+    if (!isModelAllowed(model, userTier)) {
+      return res.status(403).json({
+        code: 'MODEL_NOT_ALLOWED',
+        error: 'Model not available for your subscription tier',
+        tier: userTier,
+        requestedModel: model,
+      });
+    }
+
+    const response = await chat({
+      userId: req.user.id,
+      provider,
+      model,
+      messages,
+      temperature,
+      maxTokens,
+      stream: false,
+      requestType: 'workflow',
+      webSearchEnabled,
+      userTier,
+      effortLane,
+      promptVersion,
+      promptVariant,
+    });
+
+    res.json({
+      status: 'completed',
+      content: response?.content ?? '',
+      usage: response?.usage ?? null,
+    });
+  } catch (error) {
+    logger.error({ error: error?.message || error }, 'LLM workflow error');
+
+    if (error.code === 'QUOTA_EXCEEDED') {
+      return res.status(429).json({
+        error: 'Monthly quota exceeded',
+        quota: error.quota,
+      });
+    }
+
+    res.status(500).json({ error: 'Workflow request failed' });
   }
 });
 

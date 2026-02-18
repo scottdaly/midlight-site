@@ -214,9 +214,20 @@ const loginValidation = [
 
 // Helper to get client info
 function getClientInfo(req) {
+  const clientHeader = String(req.headers['x-midlight-client'] || req.body?.client || 'web').toLowerCase();
+  const platformHeader = String(req.headers['x-midlight-platform'] || req.body?.platform || '').toLowerCase();
+  const isNative = ['ios', 'android', 'mobile', 'native'].includes(clientHeader)
+    || ['ios', 'android'].includes(platformHeader);
+
   return {
     userAgent: req.headers['user-agent'] || 'unknown',
-    ipHash: hashIP(req.ip)
+    ipHash: hashIP(req.ip),
+    client: clientHeader,
+    platform: platformHeader || clientHeader,
+    appVersion: req.headers['x-midlight-app-version'] || req.body?.appVersion || null,
+    buildChannel: req.headers['x-midlight-build-channel'] || req.body?.buildChannel || null,
+    networkState: req.headers['x-midlight-network-state'] || req.body?.networkState || null,
+    isNative,
   };
 }
 
@@ -229,6 +240,38 @@ function setRefreshCookie(res, refreshToken, expiresAt) {
     expires: expiresAt,
     path: '/api/auth'
   });
+}
+
+function resolveRefreshToken(req) {
+  return req.cookies?.refreshToken || req.body?.refreshToken || null;
+}
+
+function authResponse(user, accessToken, expiresIn, refreshToken, clientInfo) {
+  const response = {
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.display_name,
+      avatarUrl: user.avatar_url,
+    },
+    accessToken,
+    expiresIn,
+    tokenType: 'Bearer',
+    client: {
+      type: clientInfo.client,
+      platform: clientInfo.platform,
+      appVersion: clientInfo.appVersion,
+      buildChannel: clientInfo.buildChannel,
+      networkState: clientInfo.networkState,
+    },
+  };
+
+  if (clientInfo.isNative) {
+    response.refreshToken = refreshToken;
+    response.refreshExpiresIn = 7 * 24 * 60 * 60;
+  }
+
+  return response;
 }
 
 // POST /api/auth/signup
@@ -263,27 +306,20 @@ router.post('/signup', signupLimiter, signupValidation, async (req, res) => {
     });
 
     // Generate tokens
-    const { userAgent, ipHash } = getClientInfo(req);
+    const clientInfo = getClientInfo(req);
+    const { userAgent, ipHash } = clientInfo;
     const tokens = generateTokenPair(user.id, userAgent, ipHash);
 
-    // Set refresh token cookie
-    setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    if (!clientInfo.isNative) {
+      setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    }
 
     logAuthEvent({ userId: user.id, eventType: 'signup', ipHash, userAgent });
 
     // Accept pending share invitations for this email
     acceptPendingShareInvitations(user.id, user.email);
 
-    res.status(201).json({
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.display_name,
-        avatarUrl: user.avatar_url
-      },
-      accessToken: tokens.accessToken,
-      expiresIn: tokens.expiresIn
-    });
+    res.status(201).json(authResponse(user, tokens.accessToken, tokens.expiresIn, tokens.refreshToken, clientInfo));
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Signup error');
     res.status(500).json({ error: 'Failed to create account' });
@@ -315,7 +351,8 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
 
     // Verify password
     const validPassword = await verifyPassword(password, user.password_hash);
-    const { userAgent, ipHash } = getClientInfo(req);
+    const clientInfo = getClientInfo(req);
+    const { userAgent, ipHash } = clientInfo;
     if (!validPassword) {
       logAuthEvent({ userId: user.id, eventType: 'login_failed', ipHash, userAgent });
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -324,24 +361,16 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
     // Generate tokens
     const tokens = generateTokenPair(user.id, userAgent, ipHash);
 
-    // Set refresh token cookie
-    setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    if (!clientInfo.isNative) {
+      setRefreshCookie(res, tokens.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    }
 
     logAuthEvent({ userId: user.id, eventType: 'login', ipHash, userAgent });
 
     // Accept pending share invitations for this email
     acceptPendingShareInvitations(user.id, user.email);
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.display_name,
-        avatarUrl: user.avatar_url
-      },
-      accessToken: tokens.accessToken,
-      expiresIn: tokens.expiresIn
-    });
+    res.json(authResponse(user, tokens.accessToken, tokens.expiresIn, tokens.refreshToken, clientInfo));
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Login error');
     res.status(500).json({ error: 'Login failed' });
@@ -353,7 +382,8 @@ router.post('/login', authLimiter, loginValidation, async (req, res) => {
 // if the browser fails to save the new cookie. Token rotation only happens on login.
 router.post('/refresh', refreshLimiter, (req, res) => {
   try {
-    const refreshToken = req.cookies?.refreshToken;
+    const refreshToken = resolveRefreshToken(req);
+    const clientInfo = getClientInfo(req);
 
     if (!refreshToken) {
       return res.status(401).json({ error: 'Refresh token required' });
@@ -362,30 +392,25 @@ router.post('/refresh', refreshLimiter, (req, res) => {
     // Validate refresh token
     const session = validateSession(refreshToken);
     if (!session) {
-      res.clearCookie('refreshToken', { path: '/api/auth' });
+      if (req.cookies?.refreshToken) {
+        res.clearCookie('refreshToken', { path: '/api/auth' });
+      }
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
     // Get user data
     const user = findUserById(session.user_id);
     if (!user) {
-      res.clearCookie('refreshToken', { path: '/api/auth' });
+      if (req.cookies?.refreshToken) {
+        res.clearCookie('refreshToken', { path: '/api/auth' });
+      }
       return res.status(401).json({ error: 'User not found' });
     }
 
     // Generate only a new access token - keep the same refresh token
     const accessToken = generateAccessToken(session.user_id);
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.display_name,
-        avatarUrl: user.avatar_url
-      },
-      accessToken,
-      expiresIn: 15 * 60 // 15 minutes
-    });
+    res.json(authResponse(user, accessToken, 15 * 60, refreshToken, clientInfo));
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Token refresh error');
     res.status(500).json({ error: 'Token refresh failed' });
@@ -395,7 +420,7 @@ router.post('/refresh', refreshLimiter, (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   try {
-    const refreshToken = req.cookies?.refreshToken;
+    const refreshToken = resolveRefreshToken(req);
 
     if (refreshToken) {
       const session = validateSession(refreshToken);
@@ -406,7 +431,9 @@ router.post('/logout', (req, res) => {
       invalidateSession(refreshToken);
     }
 
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    if (req.cookies?.refreshToken) {
+      res.clearCookie('refreshToken', { path: '/api/auth' });
+    }
     res.json({ success: true });
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Logout error');
@@ -579,7 +606,7 @@ router.post('/resend-verification', requireAuth, (req, res) => {
 
 // GET /api/auth/google - Initiate Google OAuth
 router.get('/google', (req, res, next) => {
-  const isDesktop = req.query.desktop === 'true';
+  const isDesktop = req.query.desktop === 'true' || req.query.mobile === 'true';
   // Dev mode: accept callback_port for local HTTP server callback (avoids protocol conflicts)
   const devCallbackPort = req.query.callback_port ? parseInt(req.query.callback_port, 10) : null;
   // Use cryptographically secure state instead of predictable 'desktop'/'web'
@@ -653,7 +680,8 @@ router.post('/exchange', exchangeLimiter, (req, res) => {
       return res.status(400).json({ error: 'Exchange code required' });
     }
 
-    const { userAgent, ipHash } = getClientInfo(req);
+    const clientInfo = getClientInfo(req);
+    const { userAgent, ipHash } = clientInfo;
     const result = exchangeCodeForTokens(code, userAgent, ipHash);
 
     if (!result) {
@@ -666,22 +694,14 @@ router.post('/exchange', exchangeLimiter, (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Set refresh token cookie (for future refreshes)
-    setRefreshCookie(res, result.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    if (!clientInfo.isNative) {
+      setRefreshCookie(res, result.refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    }
 
     // Accept pending share invitations for this email
     acceptPendingShareInvitations(user.id, user.email);
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.display_name,
-        avatarUrl: user.avatar_url
-      },
-      accessToken: result.accessToken,
-      expiresIn: 15 * 60 // 15 minutes
-    });
+    res.json(authResponse(user, result.accessToken, 15 * 60, result.refreshToken, clientInfo));
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Code exchange error');
     res.status(500).json({ error: 'Code exchange failed' });
@@ -689,3 +709,9 @@ router.post('/exchange', exchangeLimiter, (req, res) => {
 });
 
 export default router;
+
+export const __private = {
+  getClientInfo,
+  resolveRefreshToken,
+  authResponse,
+};

@@ -745,6 +745,84 @@ function runMigrations() {
         console.log('Migration: Created collaboration tier 3 tables (comments, guests, notifications, suggestions, activity, teams, branches, section locks)');
       }
     },
+    // Create mobile subscription receipts table
+    {
+      name: 'create_mobile_subscription_receipts',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='mobile_subscription_receipts'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS mobile_subscription_receipts (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            provider_transaction_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            app_account_token TEXT,
+            environment TEXT NOT NULL DEFAULT 'production',
+            expires_at DATETIME,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            raw_payload TEXT,
+            validated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(provider, provider_transaction_id)
+          );
+          CREATE INDEX IF NOT EXISTS idx_mobile_receipts_user ON mobile_subscription_receipts(user_id);
+          CREATE INDEX IF NOT EXISTS idx_mobile_receipts_provider ON mobile_subscription_receipts(provider, provider_transaction_id);
+        `);
+        console.log('Migration: Created mobile_subscription_receipts table');
+      }
+    },
+    // Create mobile notification device registry table
+    {
+      name: 'create_mobile_notification_devices',
+      check: () => {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='mobile_notification_devices'").all();
+        return tables.length > 0;
+      },
+      run: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS mobile_notification_devices (
+            id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            platform TEXT NOT NULL,
+            device_token TEXT NOT NULL,
+            push_provider TEXT DEFAULT 'native',
+            app_version TEXT,
+            build_channel TEXT,
+            locale TEXT,
+            timezone TEXT,
+            network_state TEXT,
+            delivery_failures INTEGER NOT NULL DEFAULT 0,
+            last_delivery_error TEXT,
+            last_delivery_error_at DATETIME,
+            last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, platform, device_token)
+          );
+          CREATE INDEX IF NOT EXISTS idx_mobile_notification_devices_user ON mobile_notification_devices(user_id);
+        `);
+        console.log('Migration: Created mobile_notification_devices table');
+      }
+    },
+    // Add breadcrumbs column to error_reports
+    {
+      name: 'add_breadcrumbs_to_error_reports',
+      check: () => {
+        const cols = db.prepare("PRAGMA table_info(error_reports)").all();
+        return cols.some(c => c.name === 'breadcrumbs');
+      },
+      run: () => {
+        db.exec("ALTER TABLE error_reports ADD COLUMN breadcrumbs TEXT");
+        console.log('Migration: Added breadcrumbs to error_reports table');
+      }
+    },
     // Add performance indexes for collaborative editing
     {
       name: 'add_collab_indexes',
@@ -758,6 +836,24 @@ function runMigrations() {
           CREATE INDEX IF NOT EXISTS idx_yjs_documents_updated ON yjs_documents(updated_at);
         `);
         console.log('Migration: Added collaborative editing performance indexes');
+      }
+    },
+    // Add mobile notification delivery failure tracking fields
+    {
+      name: 'add_mobile_notification_delivery_fields',
+      check: () => {
+        const columns = db.prepare("PRAGMA table_info(mobile_notification_devices)").all();
+        return columns.some((column) => column.name === 'delivery_failures')
+          && columns.some((column) => column.name === 'last_delivery_error')
+          && columns.some((column) => column.name === 'last_delivery_error_at');
+      },
+      run: () => {
+        db.exec(`
+          ALTER TABLE mobile_notification_devices ADD COLUMN delivery_failures INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE mobile_notification_devices ADD COLUMN last_delivery_error TEXT;
+          ALTER TABLE mobile_notification_devices ADD COLUMN last_delivery_error_at DATETIME;
+        `);
+        console.log('Migration: Added mobile notification delivery failure fields');
       }
     },
   ];

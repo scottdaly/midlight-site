@@ -1,14 +1,40 @@
 import { verifyAccessToken } from '../services/tokenService.js';
 import { findUserById, getUserSubscription } from '../services/authService.js';
 
-export function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
+function parseClientContext(req) {
+  const client = String(req.headers['x-midlight-client'] || 'web').toLowerCase();
+  const platform = String(req.headers['x-midlight-platform'] || client).toLowerCase();
+  const appVersion = req.headers['x-midlight-app-version'] || null;
+  const buildChannel = req.headers['x-midlight-build-channel'] || null;
+  const networkState = req.headers['x-midlight-network-state'] || null;
+  const isNative = ['ios', 'android', 'mobile', 'native'].includes(client)
+    || ['ios', 'android'].includes(platform);
 
+  return {
+    client,
+    platform,
+    appVersion,
+    buildChannel,
+    networkState,
+    isNative,
+  };
+}
+
+function getBearerToken(authHeader) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  return authHeader.split(' ')[1];
+}
+
+export function requireAuth(req, res, next) {
+  req.authContext = parseClientContext(req);
+  const token = getBearerToken(req.headers.authorization);
+
+  if (!token) {
     return res.status(401).json({ error: 'Authorization required' });
   }
 
-  const token = authHeader.split(' ')[1];
   const decoded = verifyAccessToken(token);
 
   if (!decoded) {
@@ -25,14 +51,13 @@ export function requireAuth(req, res, next) {
 }
 
 export function optionalAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
+  req.authContext = parseClientContext(req);
+  const token = getBearerToken(req.headers.authorization);
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!token) {
     req.user = null;
     return next();
   }
-
-  const token = authHeader.split(' ')[1];
   const decoded = verifyAccessToken(token);
 
   if (decoded) {

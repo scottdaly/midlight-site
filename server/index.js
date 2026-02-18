@@ -34,6 +34,7 @@ import { configurePassport } from './config/passport.js';
 import db from './db/index.js';
 import { startCleanupService } from './services/cleanupService.js';
 import { getProviderStatus } from './services/llm/index.js';
+import { countStaleMobileDevices, pruneStaleMobileDevices } from './services/mobileDeviceService.js';
 import {
   errorHandler,
   notFoundHandler,
@@ -312,6 +313,29 @@ setupProcessErrorHandlers();
 // Create HTTP server for Express + WebSocket upgrade handling
 const server = createServer(app);
 
+function shouldRunMobileDevicePruneOnStartup() {
+  if (process.env.MOBILE_DEVICE_PRUNE_ON_STARTUP != null) {
+    return process.env.MOBILE_DEVICE_PRUNE_ON_STARTUP === 'true';
+  }
+  return process.env.NODE_ENV === 'production';
+}
+
+function runStartupMobileDeviceMaintenance() {
+  if (!shouldRunMobileDevicePruneOnStartup()) {
+    return;
+  }
+
+  const staleDays = Math.max(1, Number(process.env.MOBILE_DEVICE_STALE_DAYS || 60) || 60);
+  const before = countStaleMobileDevices({ staleDays });
+  const deleted = pruneStaleMobileDevices({ staleDays });
+
+  logger.info({
+    staleDays,
+    staleBefore: before,
+    pruned: deleted,
+  }, 'Mobile device maintenance completed');
+}
+
 // WebSocket upgrade handler for collaborative editing
 const collabWss = new WebSocketServer({ noServer: true });
 
@@ -347,6 +371,9 @@ server.listen(PORT, () => {
 
   // Start consolidated cleanup service (expired tokens, sessions, old audit data)
   startCleanupService();
+
+  // Prune stale mobile push registrations
+  runStartupMobileDeviceMaintenance();
 
   logger.info({
     port: PORT,

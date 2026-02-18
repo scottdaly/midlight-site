@@ -5,8 +5,14 @@
  */
 
 import { Router } from 'express';
+import { body, param, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db/index.js';
+import {
+  listMobileDevicesForUser,
+  registerMobileDevice,
+  unregisterMobileDevice,
+} from '../services/mobileDeviceService.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -166,6 +172,121 @@ router.patch('/preferences', requireAuth, (req, res) => {
     res.status(500).json({ error: 'Failed to update preferences' });
   }
 });
+
+/**
+ * GET /mobile/register-device — List native push token registrations for current user
+ */
+router.get('/mobile/register-device', requireAuth, (req, res) => {
+  try {
+    const devices = listMobileDevicesForUser({
+      userId: req.user.id,
+    });
+
+    res.json({
+      devices: devices.map((device) => ({
+        id: device.id,
+        platform: device.platform,
+        pushProvider: device.pushProvider,
+        appVersion: device.appVersion,
+        buildChannel: device.buildChannel,
+        locale: device.locale,
+        timezone: device.timezone,
+        networkState: device.networkState,
+        deliveryFailures: device.deliveryFailures,
+        lastDeliveryError: device.lastDeliveryError,
+        lastDeliveryErrorAt: device.lastDeliveryErrorAt,
+        lastSeenAt: device.lastSeenAt,
+      })),
+    });
+  } catch (err) {
+    logger.error({ error: err.message }, 'Failed to list mobile devices');
+    res.status(500).json({ error: 'Failed to list mobile devices' });
+  }
+});
+
+/**
+ * POST /mobile/register-device — Register/update native push token
+ */
+router.post(
+  '/mobile/register-device',
+  requireAuth,
+  [
+    body('platform').isIn(['ios', 'android']).withMessage('platform must be ios or android'),
+    body('deviceToken').isString().trim().notEmpty().withMessage('deviceToken is required'),
+    body('pushProvider').optional().isIn(['apns', 'fcm', 'native']),
+    body('appVersion').optional().isString(),
+    body('buildChannel').optional().isIn(['debug', 'internal', 'beta', 'production']),
+    body('locale').optional().isString(),
+    body('timezone').optional().isString(),
+    body('networkState').optional().isString(),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const device = registerMobileDevice({
+        userId: req.user.id,
+        platform: req.body.platform,
+        deviceToken: req.body.deviceToken,
+        pushProvider: req.body.pushProvider || null,
+        appVersion: req.body.appVersion || null,
+        buildChannel: req.body.buildChannel || null,
+        locale: req.body.locale || null,
+        timezone: req.body.timezone || null,
+        networkState: req.body.networkState || null,
+      });
+
+      res.json({
+        success: true,
+        device: {
+          id: device.id,
+          platform: device.platform,
+          pushProvider: device.push_provider,
+          appVersion: device.app_version,
+          buildChannel: device.build_channel,
+          lastSeenAt: device.last_seen_at,
+        },
+      });
+    } catch (err) {
+      logger.error({ error: err.message }, 'Failed to register mobile device');
+      res.status(500).json({ error: 'Failed to register mobile device' });
+    }
+  }
+);
+
+/**
+ * DELETE /mobile/register-device/:id — Remove a native push token registration
+ */
+router.delete(
+  '/mobile/register-device/:id',
+  requireAuth,
+  [param('id').isUUID().withMessage('Invalid device registration id')],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const removed = unregisterMobileDevice({
+        userId: req.user.id,
+        registrationId: req.params.id,
+      });
+
+      if (!removed) {
+        return res.status(404).json({ error: 'Device registration not found' });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      logger.error({ error: err.message }, 'Failed to delete mobile device');
+      res.status(500).json({ error: 'Failed to delete mobile device' });
+    }
+  }
+);
 
 /**
  * GET /stream — SSE stream for real-time notification delivery

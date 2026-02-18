@@ -2,10 +2,10 @@ import rateLimit from 'express-rate-limit';
 import { createHash } from 'crypto';
 import db from '../db/index.js';
 
-// Rate Limiter for Admin API
+// Rate Limiter for Admin API (already behind Basic Auth, generous limit)
 export const adminLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute per IP
+  max: 1000, // High limit since already behind Basic Auth
   message: { error: 'Too many admin requests, please slow down' },
   standardHeaders: true,
   legacyHeaders: false,

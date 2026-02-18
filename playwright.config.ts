@@ -41,5 +41,9 @@ export default defineConfig({
     url: 'http://localhost:3001/health',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
+    env: {
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-dummy',
+      NODE_ENV: 'test',
+    },
   },
 });

@@ -1,0 +1,68 @@
+name: Check Mobile Contracts
+
+on:
+  pull_request:
+    paths:
+      - 'server/routes/auth.js'
+      - 'server/routes/notifications.js'
+      - 'server/routes/subscription.js'
+      - 'server/routes/share.js'
+      - 'server/services/mobileBillingService.js'
+      - 'server/services/mobileDeviceService.js'
+      - 'server/services/emailService.js'
+      - 'server/db/index.js'
+      - 'server/db/schema.sql'
+      - 'server/__tests__/mobileAuthContract.test.js'
+      - 'server/__tests__/mobileBilling.test.js'
+      - 'server/__tests__/mobileDevices.test.js'
+      - 'server/__tests__/emailShareInvitation.test.js'
+      - 'server/__tests__/shareGuestAuth.test.js'
+      - '.env.example'
+      - '.github/workflows/check-mobile-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server/routes/auth.js'
+      - 'server/routes/notifications.js'
+      - 'server/routes/subscription.js'
+      - 'server/routes/share.js'
+      - 'server/services/mobileBillingService.js'
+      - 'server/services/mobileDeviceService.js'
+      - 'server/services/emailService.js'
+      - 'server/db/index.js'
+      - 'server/db/schema.sql'
+      - 'server/__tests__/mobileAuthContract.test.js'
+      - 'server/__tests__/mobileBilling.test.js'
+      - 'server/__tests__/mobileDevices.test.js'
+      - 'server/__tests__/emailShareInvitation.test.js'
+      - 'server/__tests__/shareGuestAuth.test.js'
+      - '.env.example'
+      - '.github/workflows/check-mobile-contracts.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-mobile-contracts:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run mobile contract tests
+        run: >
+          node --test
+          server/__tests__/mobileAuthContract.test.js
+          server/__tests__/mobileBilling.test.js
+          server/__tests__/mobileDevices.test.js
+          server/__tests__/emailShareInvitation.test.js
+          server/__tests__/shareGuestAuth.test.js
