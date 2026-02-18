@@ -23,3 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Local sqlite runtime artifacts
+server/db/*.db
+server/db/*.db-wal
+server/db/*.db-shm
+server/db/*.db-journal
+
+# Local test output
+test-results/
