@@ -533,4 +533,26 @@ router.get('/alerts/history', (req, res) => {
   }
 });
 
+// GET /api/admin/reports/:id/snapshots
+router.get('/reports/:id/snapshots', (req, res) => {
+  try {
+    const reportId = parseInt(req.params.id);
+    if (!reportId || isNaN(reportId)) {
+      return res.status(400).json({ error: 'Invalid report ID' });
+    }
+
+    const snapshots = db.prepare(`
+      SELECT id, snapshot_index, timestamp, trigger_reason, snapshot_data
+      FROM session_snapshots
+      WHERE report_id = ?
+      ORDER BY snapshot_index ASC
+    `).all(reportId);
+
+    res.json({ snapshots });
+  } catch (err) {
+    logger.error({ error: err?.message || err }, 'Error fetching report snapshots');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;

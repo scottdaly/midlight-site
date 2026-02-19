@@ -193,6 +193,146 @@ async function checkSpike(rule, issue) {
 }
 
 /**
+ * Send a Slack webhook notification
+ */
+async function sendSlackWebhook(webhookUrl, rule, issue) {
+  if (!webhookUrl) return false;
+
+  const dashboardUrl = process.env.SITE_URL
+    ? `${process.env.SITE_URL}/admin/errors`
+    : 'https://midlight.ai/admin/errors';
+
+  const color = rule.rule_type === 'spike' ? '#ef4444'
+    : rule.rule_type === 'threshold' ? '#f59e0b'
+    : issue.regressed ? '#f97316'
+    : '#3b82f6';
+
+  const payload = {
+    attachments: [{
+      color,
+      fallback: `[Midlight] ${buildSubject(rule, issue)}`,
+      blocks: [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: buildSubject(rule, issue) }
+        },
+        {
+          type: 'section',
+          fields: [
+            { type: 'mrkdwn', text: `*Category:*\n${issue.category || 'unknown'}` },
+            { type: 'mrkdwn', text: `*Error Type:*\n${issue.error_type || 'unknown'}` },
+            { type: 'mrkdwn', text: `*Occurrences:*\n${issue.occurrence_count || 1}` },
+            { type: 'mrkdwn', text: `*Status:*\n${issue.status || 'open'}` }
+          ]
+        },
+        ...(issue.message_pattern ? [{
+          type: 'section',
+          text: { type: 'mrkdwn', text: `\`\`\`${issue.message_pattern.slice(0, 500)}\`\`\`` }
+        }] : []),
+        {
+          type: 'actions',
+          elements: [{
+            type: 'button',
+            text: { type: 'plain_text', text: 'View in Dashboard' },
+            url: dashboardUrl,
+            style: 'primary'
+          }]
+        }
+      ]
+    }]
+  };
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch (err) {
+    logger.error({ error: err?.message || err }, 'Failed to send Slack webhook');
+    return false;
+  }
+}
+
+/**
+ * Send a Discord webhook notification
+ */
+async function sendDiscordWebhook(webhookUrl, rule, issue) {
+  if (!webhookUrl) return false;
+
+  const dashboardUrl = process.env.SITE_URL
+    ? `${process.env.SITE_URL}/admin/errors`
+    : 'https://midlight.ai/admin/errors';
+
+  const color = rule.rule_type === 'spike' ? 0xef4444
+    : rule.rule_type === 'threshold' ? 0xf59e0b
+    : issue.regressed ? 0xf97316
+    : 0x3b82f6;
+
+  const payload = {
+    embeds: [{
+      title: buildSubject(rule, issue),
+      color,
+      fields: [
+        { name: 'Category', value: issue.category || 'unknown', inline: true },
+        { name: 'Error Type', value: issue.error_type || 'unknown', inline: true },
+        { name: 'Occurrences', value: String(issue.occurrence_count || 1), inline: true },
+        ...(issue.message_pattern ? [{
+          name: 'Pattern',
+          value: `\`\`\`${issue.message_pattern.slice(0, 500)}\`\`\``,
+          inline: false
+        }] : [])
+      ],
+      url: dashboardUrl,
+      timestamp: new Date().toISOString(),
+      footer: { text: `Rule: ${rule.name} | Type: ${rule.rule_type}` }
+    }]
+  };
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch (err) {
+    logger.error({ error: err?.message || err }, 'Failed to send Discord webhook');
+    return false;
+  }
+}
+
+/**
+ * Send notification via the appropriate channel
+ */
+async function sendNotification(rule, issue) {
+  const channel = rule.notification_channel || 'email';
+
+  switch (channel) {
+    case 'slack':
+      return await sendSlackWebhook(rule.webhook_url, rule, issue);
+    case 'discord':
+      return await sendDiscordWebhook(rule.webhook_url, rule, issue);
+    case 'github': {
+      try {
+        const { createOrUpdateGitHubIssue } = await import('./githubIntegration.js');
+        return await createOrUpdateGitHubIssue(rule, issue);
+      } catch (err) {
+        logger.error({ error: err?.message || err }, 'Failed to create GitHub issue');
+        return false;
+      }
+    }
+    case 'email':
+    default: {
+      const subject = buildSubject(rule, issue);
+      const html = buildEmailHtml(rule, issue);
+      return await sendEmail(rule.email, subject, html);
+    }
+  }
+}
+
+/**
  * Trigger an alert - record it and send notification
  */
 async function triggerAlert(rule, issue) {
@@ -219,12 +359,8 @@ async function triggerAlert(rule, issue) {
     const alertId = txn();
     if (alertId === null) return; // Duplicate alert prevented
 
-    // Build email content
-    const subject = buildSubject(rule, issue);
-    const html = buildEmailHtml(rule, issue);
-
-    // Send email
-    const sent = await sendEmail(rule.email, subject, html);
+    // Send notification via the configured channel
+    const sent = await sendNotification(rule, issue);
 
     // Update alert history with result
     db.prepare(`
@@ -232,12 +368,13 @@ async function triggerAlert(rule, issue) {
       SET notification_sent = ?,
           error_message = ?
       WHERE id = ?
-    `).run(sent ? 1 : 0, sent ? null : 'Email sending failed', alertId);
+    `).run(sent ? 1 : 0, sent ? null : 'Notification sending failed', alertId);
 
     logger.info({
       ruleId: rule.id,
       ruleName: rule.name,
       issueId: issue.id,
+      channel: rule.notification_channel || 'email',
       sent
     }, 'Alert triggered');
 

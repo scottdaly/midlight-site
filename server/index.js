@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { timingSafeEqual } from 'crypto';
 import passport from 'passport';
 import reportsRouter from './routes/reports.js';
+import performanceRouter from './routes/performance.js';
 import authRouter from './routes/auth.js';
 import userRouter from './routes/user.js';
 import llmRouter from './routes/llm.js';
@@ -325,6 +326,8 @@ app.use('/api/branches', branchesRouter);
 app.use('/api/marketplace', marketplaceRouter);
 app.use('/api/rag', ragRouter);
 app.use('/api/prompts', promptsRouter);
+app.use('/api/perf-report', performanceRouter);
+app.use('/api/admin/performance', performanceRouter);
 app.use('/api/admin', adminRouter);
 
 // Health check endpoints (no auth required)
