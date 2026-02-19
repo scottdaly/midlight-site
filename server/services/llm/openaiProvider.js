@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { extractTextFromPdf } from '../pdfExtractor.js';
 
 let client = null;
 
@@ -46,8 +47,8 @@ export const OPENAI_MODELS = [
 const NO_TEMPERATURE_MODELS = ['gpt-5-nano', 'gpt-5-mini', 'gpt-5.2'];
 
 // Convert our message format to OpenAI format
-function convertMessages(messages) {
-  return messages.map(msg => {
+async function convertMessages(messages) {
+  return Promise.all(messages.map(async msg => {
     if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
       // Assistant message with tool calls - convert toolCalls to tool_calls format
       return {
@@ -70,18 +71,25 @@ function convertMessages(messages) {
         content: msg.content
       };
     } else if (Array.isArray(msg.content)) {
-      // Multimodal message (vision) — convert to OpenAI format
+      // Multimodal message (vision/documents) — convert to OpenAI format
+      const parts = [];
+      for (const part of msg.content) {
+        if (part.type === 'image') {
+          parts.push({
+            type: 'image_url',
+            image_url: { url: `data:${part.mediaType};base64,${part.data}` }
+          });
+        } else if (part.type === 'document') {
+          // OpenAI doesn't support native PDF — extract text as fallback
+          const text = await extractTextFromPdf(part.data, part.name);
+          parts.push({ type: 'text', text });
+        } else {
+          parts.push({ type: 'text', text: part.text });
+        }
+      }
       return {
         role: msg.role,
-        content: msg.content.map(part => {
-          if (part.type === 'image') {
-            return {
-              type: 'image_url',
-              image_url: { url: `data:${part.mediaType};base64,${part.data}` }
-            };
-          }
-          return { type: 'text', text: part.text };
-        })
+        content: parts
       };
     } else {
       // Regular message (system, user, or assistant without tool calls)
@@ -90,7 +98,7 @@ function convertMessages(messages) {
         content: msg.content
       };
     }
-  });
+  }));
 }
 
 export async function chat({
@@ -101,9 +109,10 @@ export async function chat({
   stream = false,
   signal = null
 }) {
+  const convertedMessages = await convertMessages(messages);
   const params = {
     model,
-    messages,
+    messages: convertedMessages,
     max_completion_tokens: maxTokens,
     stream
   };
@@ -197,7 +206,7 @@ export async function chatWithTools({
 }) {
   const params = {
     model,
-    messages: convertMessages(messages),
+    messages: await convertMessages(messages),
     tools: tools.map(tool => ({
       type: 'function',
       function: {
@@ -262,7 +271,7 @@ export async function* chatWithToolsStream({
 }) {
   const params = {
     model,
-    messages: convertMessages(messages),
+    messages: await convertMessages(messages),
     tools: tools.map(tool => ({
       type: 'function',
       function: {

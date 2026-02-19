@@ -106,11 +106,15 @@ function convertMessages(messages) {
         }]
       });
     } else if (Array.isArray(msg.content)) {
-      // Multimodal message (vision) — convert to Gemini format
+      // Multimodal message (vision/documents) — convert to Gemini format
       geminiContents.push({
         role: 'user',
         parts: msg.content.map(part => {
           if (part.type === 'image') {
+            return { inlineData: { mimeType: part.mediaType, data: part.data } };
+          }
+          if (part.type === 'document') {
+            // Gemini supports PDF natively via inlineData
             return { inlineData: { mimeType: part.mediaType, data: part.data } };
           }
           return { text: part.text };

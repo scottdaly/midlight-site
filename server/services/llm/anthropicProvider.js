@@ -90,13 +90,19 @@ function convertMessages(messages) {
         }]
       });
     } else if (Array.isArray(msg.content)) {
-      // Multimodal message (vision) — convert to Anthropic format
+      // Multimodal message (vision/documents) — convert to Anthropic format
       anthropicMessages.push({
         role: 'user',
         content: msg.content.map(part => {
           if (part.type === 'image') {
             return {
               type: 'image',
+              source: { type: 'base64', media_type: part.mediaType, data: part.data }
+            };
+          }
+          if (part.type === 'document') {
+            return {
+              type: 'document',
               source: { type: 'base64', media_type: part.mediaType, data: part.data }
             };
           }

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { extractTextFromPdf } from '../pdfExtractor.js';
 
 // Kimi K2.5 uses OpenAI-compatible API
 // Primary: NVIDIA (free tier)
@@ -48,8 +49,8 @@ const MODEL_ID_MAP = {
 const THINKING_MODELS = new Set(['kimi-k2.5-thinking']);
 
 // Convert our message format to OpenAI format (Kimi is OpenAI-compatible)
-function convertMessages(messages) {
-  return messages.map(msg => {
+async function convertMessages(messages) {
+  return Promise.all(messages.map(async msg => {
     if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
       // Assistant message with tool calls - convert toolCalls to tool_calls format
       return {
@@ -72,18 +73,25 @@ function convertMessages(messages) {
         content: msg.content
       };
     } else if (Array.isArray(msg.content)) {
-      // Multimodal message (vision) — convert to OpenAI-compatible format
+      // Multimodal message (vision/documents) — convert to OpenAI-compatible format
+      const parts = [];
+      for (const part of msg.content) {
+        if (part.type === 'image') {
+          parts.push({
+            type: 'image_url',
+            image_url: { url: `data:${part.mediaType};base64,${part.data}` }
+          });
+        } else if (part.type === 'document') {
+          // Kimi doesn't support native PDF — extract text as fallback
+          const text = await extractTextFromPdf(part.data, part.name);
+          parts.push({ type: 'text', text });
+        } else {
+          parts.push({ type: 'text', text: part.text });
+        }
+      }
       return {
         role: msg.role,
-        content: msg.content.map(part => {
-          if (part.type === 'image') {
-            return {
-              type: 'image_url',
-              image_url: { url: `data:${part.mediaType};base64,${part.data}` }
-            };
-          }
-          return { type: 'text', text: part.text };
-        })
+        content: parts
       };
     } else {
       // Regular message (system, user, or assistant without tool calls)
@@ -92,7 +100,7 @@ function convertMessages(messages) {
         content: msg.content
       };
     }
-  });
+  }));
 }
 
 /**
@@ -132,7 +140,7 @@ export async function chat({
   const isThinking = THINKING_MODELS.has(model);
   const params = {
     model: apiModel,
-    messages: convertMessages(messages),
+    messages: await convertMessages(messages),
     max_tokens: maxTokens,
     stream,
     // Thinking mode: temperature=1.0 recommended; instant: 0.6
@@ -263,7 +271,7 @@ export async function chatWithTools({
   const isThinking = THINKING_MODELS.has(model);
   const params = {
     model: apiModel,
-    messages: convertMessages(messages),
+    messages: await convertMessages(messages),
     tools: tools.map(tool => ({
       type: 'function',
       function: {
@@ -331,7 +339,7 @@ export async function* chatWithToolsStream({
 
   const params = {
     model: apiModel,
-    messages: convertMessages(messages),
+    messages: await convertMessages(messages),
     tools: tools.map(tool => ({
       type: 'function',
       function: {
