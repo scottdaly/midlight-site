@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import db from '../db/index.js';
 import { logger } from '../utils/logger.js';
 import { checkAlertRules } from './alertService.js';
+import { parseStack, extractSignificantFrames, generateStackFingerprint } from './stackParser.js';
 
 /**
  * Normalize an error message by stripping variable parts.
@@ -89,7 +90,7 @@ export function generateFingerprint(category, errorType, message) {
  * @returns {object} - The issue record (existing or newly created)
  */
 export function findOrCreateIssue(fingerprint, errorData) {
-  const { category, errorType, message } = errorData;
+  const { category, errorType, message, appVersion } = errorData;
   const messagePattern = normalizeMessage(message);
 
   // Wrap in transaction to prevent race conditions with concurrent requests
@@ -99,24 +100,48 @@ export function findOrCreateIssue(fingerprint, errorData) {
     ).get(fingerprint);
 
     if (existingIssue) {
-      db.prepare(`
-        UPDATE error_issues
-        SET occurrence_count = occurrence_count + 1,
-            last_seen_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(existingIssue.id);
+      // Check for regression: issue was resolved but appears in a different version
+      let regressed = false;
+      if (existingIssue.status === 'resolved' && appVersion && appVersion !== existingIssue.resolved_in_version) {
+        db.prepare(`
+          UPDATE error_issues
+          SET status = 'open',
+              occurrence_count = occurrence_count + 1,
+              last_seen_at = CURRENT_TIMESTAMP,
+              regression_count = COALESCE(regression_count, 0) + 1,
+              last_regression_version = ?,
+              resolved_at = NULL
+          WHERE id = ?
+        `).run(appVersion, existingIssue.id);
 
-      if (existingIssue.status === 'resolved') {
-        logger.info({
+        regressed = true;
+        logger.warn({
           issueId: existingIssue.id,
-          fingerprint
-        }, 'Resolved issue has new occurrence');
+          fingerprint,
+          version: appVersion,
+          resolvedIn: existingIssue.resolved_in_version
+        }, 'Resolved issue REGRESSED in new version');
+      } else {
+        db.prepare(`
+          UPDATE error_issues
+          SET occurrence_count = occurrence_count + 1,
+              last_seen_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(existingIssue.id);
+
+        if (existingIssue.status === 'resolved') {
+          logger.info({
+            issueId: existingIssue.id,
+            fingerprint
+          }, 'Resolved issue has new occurrence');
+        }
       }
 
       return {
         ...existingIssue,
         occurrence_count: existingIssue.occurrence_count + 1,
-        isNew: false
+        isNew: false,
+        regressed
       };
     }
 
@@ -134,7 +159,8 @@ export function findOrCreateIssue(fingerprint, errorData) {
       message_pattern: messagePattern,
       occurrence_count: 1,
       status: 'open',
-      isNew: true
+      isNew: true,
+      regressed: false
     };
 
     logger.info({
@@ -188,25 +214,100 @@ export function linkReportToIssue(reportId, issueId) {
  * @returns {object} - The issue the report was linked to
  */
 export function processErrorReport(reportId, errorData) {
-  const { category, errorType, message } = errorData;
+  const {
+    category,
+    errorType,
+    message,
+    symbolicatedStack,
+    stackTrace,
+    appVersion,
+    userHash,
+    sessionId
+  } = errorData;
 
-  // Generate fingerprint
-  const fingerprint = generateFingerprint(category, errorType, message);
+  // Generate fingerprint — prefer stack-based when symbolicated stack is available
+  let fingerprint;
+  let fingerprintVersion = 1;
+
+  const stackForFingerprinting = symbolicatedStack || stackTrace;
+  if (stackForFingerprinting) {
+    const frames = parseStack(stackForFingerprinting);
+    const significant = extractSignificantFrames(frames, 3);
+
+    if (significant.length > 0) {
+      fingerprint = generateStackFingerprint(category, errorType, significant);
+      fingerprintVersion = 2;
+    }
+  }
+
+  // Fall back to message-based fingerprint
+  if (!fingerprint) {
+    fingerprint = generateFingerprint(category, errorType, message);
+  }
 
   // Find or create issue
-  const issue = findOrCreateIssue(fingerprint, errorData);
+  const issue = findOrCreateIssue(fingerprint, { ...errorData, appVersion });
+
+  // Update fingerprint version if this is a new stack-based issue
+  if (issue.isNew && fingerprintVersion === 2) {
+    try {
+      db.prepare('UPDATE error_issues SET fingerprint_version = ? WHERE id = ?').run(fingerprintVersion, issue.id);
+    } catch { /* ignore */ }
+  }
 
   // Link report to issue
   linkReportToIssue(reportId, issue.id);
 
+  // Update affected users/sessions counts
+  if (userHash || sessionId) {
+    try {
+      updateAffectedCounts(issue.id, userHash, sessionId);
+    } catch (err) {
+      logger.debug({ error: err?.message }, 'Error updating affected counts');
+    }
+  }
+
   // Check alert rules asynchronously (don't block the request)
   setImmediate(() => {
-    checkAlertRules(issue, issue.isNew).catch(err => {
+    // Also check for regression alerts
+    const alertType = issue.regressed ? 'regression' : (issue.isNew ? 'new' : 'existing');
+    checkAlertRules(issue, issue.isNew || issue.regressed).catch(err => {
       logger.error({ error: err?.message || err }, 'Error checking alert rules');
     });
   });
 
   return issue;
+}
+
+/**
+ * Update the affected_users and affected_sessions counts for an issue
+ */
+function updateAffectedCounts(issueId, userHash, sessionId) {
+  if (userHash) {
+    const userCount = db.prepare(`
+      SELECT COUNT(DISTINCT user_hash) as count
+      FROM error_reports
+      WHERE issue_id = ? AND user_hash IS NOT NULL
+    `).get(issueId);
+
+    if (userCount) {
+      db.prepare('UPDATE error_issues SET affected_users = ? WHERE id = ?')
+        .run(userCount.count, issueId);
+    }
+  }
+
+  if (sessionId) {
+    const sessionCount = db.prepare(`
+      SELECT COUNT(DISTINCT session_id) as count
+      FROM error_reports
+      WHERE issue_id = ? AND session_id IS NOT NULL
+    `).get(issueId);
+
+    if (sessionCount) {
+      db.prepare('UPDATE error_issues SET affected_sessions = ? WHERE id = ?')
+        .run(sessionCount.count, issueId);
+    }
+  }
 }
 
 /**

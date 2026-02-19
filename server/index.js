@@ -211,8 +211,8 @@ app.use((err, req, res, next) => {
 
 // Rate Limiter for Submission Endpoint
 const submissionLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 100, // Limit each IP to 100 requests per `window` (here, per hour)
+  windowMs: CONFIG.rateLimit.errorReport.windowMs,
+  max: CONFIG.rateLimit.errorReport.max,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -288,7 +288,10 @@ const basicAuth = (req, res, next) => {
 // API Routes
 // Apply rate limiter specifically to the submission endpoint
 app.use('/api', (req, res, next) => {
-  if (req.path === '/error-report' && req.method === 'POST') {
+  if (
+    req.method === 'POST' &&
+    (req.path === '/error-report' || req.path === '/error-report/batch')
+  ) {
     submissionLimiter(req, res, next);
   } else {
     next();
@@ -296,7 +299,14 @@ app.use('/api', (req, res, next) => {
 });
 
 // Admin protection
-app.use('/api/admin', adminLimiter, basicAuth);
+app.use('/api/admin', adminLimiter, (req, res, next) => {
+  // Sourcemap upload uses API-key bearer auth inside the route handler.
+  // Keep admin Basic Auth for all other admin endpoints.
+  if (req.path === '/sourcemaps/upload') {
+    return next();
+  }
+  return basicAuth(req, res, next);
+});
 
 // API Routes
 app.use('/api', reportsRouter);

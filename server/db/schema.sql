@@ -14,13 +14,66 @@ CREATE TABLE IF NOT EXISTS error_reports (
   ip_hash TEXT,
   received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   issue_id INTEGER REFERENCES error_issues(id),  -- Link to aggregated issues
-  breadcrumbs TEXT                                -- JSON array of breadcrumb events
+  breadcrumbs TEXT,                               -- JSON array of breadcrumb events
+  symbolicated_stack TEXT,                        -- Source-mapped stack trace
+  release_id INTEGER REFERENCES releases(id),     -- Link to release for symbolication
+  user_hash TEXT                                  -- Privacy-preserving user hash
 );
 
 CREATE INDEX IF NOT EXISTS idx_error_reports_category ON error_reports(category);
 CREATE INDEX IF NOT EXISTS idx_error_reports_received_at ON error_reports(received_at);
 CREATE INDEX IF NOT EXISTS idx_error_reports_app_version ON error_reports(app_version);
 CREATE INDEX IF NOT EXISTS idx_error_reports_issue ON error_reports(issue_id);
+CREATE INDEX IF NOT EXISTS idx_error_reports_user_hash ON error_reports(user_hash);
+
+-- Releases (for source map management)
+CREATE TABLE IF NOT EXISTS releases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT UNIQUE NOT NULL,
+  platform TEXT NOT NULL,
+  commit_sha TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS release_sourcemaps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  release_id INTEGER NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  map_path TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(release_id, file_path)
+);
+
+-- Session Snapshots (lightweight DOM snapshots for session replay)
+CREATE TABLE IF NOT EXISTS session_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id INTEGER NOT NULL REFERENCES error_reports(id) ON DELETE CASCADE,
+  snapshot_index INTEGER NOT NULL,
+  timestamp DATETIME NOT NULL,
+  trigger_reason TEXT,
+  snapshot_data TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_snapshots_report ON session_snapshots(report_id);
+
+-- Performance Events (Web Vitals, Tauri command latency)
+CREATE TABLE IF NOT EXISTS performance_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  metric_name TEXT NOT NULL,
+  value REAL NOT NULL,
+  rating TEXT,
+  app_version TEXT,
+  platform TEXT,
+  user_hash TEXT,
+  session_id TEXT,
+  context TEXT,
+  received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_performance_events_type ON performance_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_performance_events_received ON performance_events(received_at);
+CREATE INDEX IF NOT EXISTS idx_performance_events_metric ON performance_events(metric_name);
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
@@ -259,7 +312,13 @@ CREATE TABLE IF NOT EXISTS error_issues (
   status TEXT DEFAULT 'open',             -- 'open', 'resolved', 'ignored'
   resolved_at DATETIME,
   resolved_in_version TEXT,               -- App version where it was fixed
-  notes TEXT                              -- Admin notes/comments
+  notes TEXT,                             -- Admin notes/comments
+  regression_count INTEGER DEFAULT 0,    -- Number of times this issue regressed
+  last_regression_version TEXT,          -- Last version where regression detected
+  fingerprint_version INTEGER DEFAULT 1, -- 1=message-based, 2=stack-based
+  affected_users INTEGER DEFAULT 0,      -- COUNT DISTINCT user_hash
+  affected_sessions INTEGER DEFAULT 0,   -- COUNT DISTINCT session_id
+  github_issue_url TEXT                  -- Linked GitHub issue URL
 );
 
 CREATE INDEX IF NOT EXISTS idx_error_issues_fingerprint ON error_issues(fingerprint);
@@ -267,7 +326,7 @@ CREATE INDEX IF NOT EXISTS idx_error_issues_status ON error_issues(status);
 CREATE INDEX IF NOT EXISTS idx_error_issues_last_seen ON error_issues(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_error_issues_category ON error_issues(category);
 
--- Alert Rules (for email notifications)
+-- Alert Rules (for notifications via email, Slack, Discord, or GitHub)
 CREATE TABLE IF NOT EXISTS alert_rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -275,8 +334,11 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   category_filter TEXT,                   -- Optional: only alert for specific category
   threshold_count INTEGER,                -- For threshold rules: trigger when > N errors
   threshold_window_minutes INTEGER,       -- For threshold rules: within M minutes
-  email TEXT NOT NULL,                    -- Email address to notify
+  email TEXT NOT NULL,                    -- Email address to notify (also used as fallback)
   enabled INTEGER DEFAULT 1,
+  notification_channel TEXT DEFAULT 'email', -- 'email', 'slack', 'discord', 'github'
+  webhook_url TEXT,                       -- Slack/Discord webhook URL
+  github_repo TEXT,                       -- owner/repo for GitHub issue creation
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

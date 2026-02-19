@@ -1057,6 +1057,7 @@ function ensureErrorReportsSchemaCompatibility() {
     { column: 'breadcrumbs', sql: "ALTER TABLE error_reports ADD COLUMN breadcrumbs TEXT" },
     { column: 'symbolicated_stack', sql: "ALTER TABLE error_reports ADD COLUMN symbolicated_stack TEXT" },
     { column: 'release_id', sql: "ALTER TABLE error_reports ADD COLUMN release_id INTEGER REFERENCES releases(id)" },
+    { column: 'user_hash', sql: "ALTER TABLE error_reports ADD COLUMN user_hash TEXT" },
   ];
 
   for (const entry of compatibilityColumns) {
@@ -1076,6 +1077,23 @@ function ensureErrorReportsSchemaCompatibility() {
   }
 }
 
+function assertErrorReportsSchemaReady() {
+  if (!hasTable('error_reports')) {
+    throw new Error('error_reports table missing after schema initialization');
+  }
+  const requiredColumns = [
+    'issue_id',
+    'breadcrumbs',
+    'symbolicated_stack',
+    'release_id',
+    'user_hash',
+  ];
+  const missing = requiredColumns.filter((column) => !hasColumn('error_reports', column));
+  if (missing.length > 0) {
+    throw new Error(`error_reports missing required columns: ${missing.join(', ')}`);
+  }
+}
+
 // Run migrations first (for existing databases)
 runMigrations();
 ensureErrorReportsSchemaCompatibility();
@@ -1084,6 +1102,7 @@ ensureErrorReportsSchemaCompatibility();
 const schemaPath = path.join(__dirname, 'schema.sql');
 const schema = fs.readFileSync(schemaPath, 'utf8');
 db.exec(schema);
+assertErrorReportsSchemaReady();
 
 console.log(`Connected to SQLite database at ${dbPath}`);
 
