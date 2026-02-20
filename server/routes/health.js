@@ -12,6 +12,7 @@
 import express from 'express';
 import db from '../db/index.js';
 import { getProviderStatus } from '../services/llm/index.js';
+import { getGuardrailMetrics } from '../services/llm/guardrailMetrics.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -93,6 +94,7 @@ router.get('/health/ready', async (req, res) => {
  */
 router.get('/health/metrics', (req, res) => {
   const memoryUsage = process.memoryUsage();
+  const llmGuardrails = getGuardrailMetrics();
 
   res.json({
     uptime: process.uptime(),
@@ -103,6 +105,7 @@ router.get('/health/metrics', (req, res) => {
       external: memoryUsage.external,
     },
     cpu: process.cpuUsage(),
+    llmGuardrails,
     timestamp: new Date().toISOString(),
   });
 });

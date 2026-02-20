@@ -5,6 +5,12 @@ import * as kimiProvider from './kimiProvider.js';
 import { checkQuota, trackUsage } from './quotaManager.js';
 import * as searchService from '../search/index.js';
 import { CONFIG } from '../../config/index.js';
+import {
+  resolveAttachmentValidationMode,
+  validateChatMessagesWithPolicy,
+} from './attachmentValidation.js';
+import { incrementGuardrailMetric } from './guardrailMetrics.js';
+import { logger } from '../../utils/logger.js';
 
 // Combined model configuration
 export const MODELS = {
@@ -40,6 +46,31 @@ function getProvider(providerName) {
       return kimiProvider;
     default:
       throw new Error(`Unknown provider: ${providerName}`);
+  }
+}
+
+function getAttachmentValidationMode() {
+  return resolveAttachmentValidationMode(CONFIG.llm?.guardrails);
+}
+
+function validateMessagesOrThrow(messages) {
+  const mode = getAttachmentValidationMode();
+  try {
+    const result = validateChatMessagesWithPolicy(messages, { mode });
+    if (result.warning) {
+      incrementGuardrailMetric('attachmentValidationWarn');
+      logger.warn(
+        {
+          mode,
+          message: result.warning.message,
+        },
+        'LLM attachment validation warning (request accepted in warn mode)'
+      );
+    }
+  } catch (error) {
+    const err = new Error(error instanceof Error ? error.message : String(error));
+    err.code = 'INVALID_REQUEST';
+    throw err;
   }
 }
 
@@ -119,6 +150,8 @@ export async function chat({
   promptVariant = null,
   signal = null
 }) {
+  validateMessagesOrThrow(messages);
+
   // Check quota
   const quota = await checkQuota(userId);
   if (!quota.allowed) {
@@ -231,6 +264,8 @@ export async function chatWithTools({
   promptVersion = null,
   promptVariant = null
 }) {
+  validateMessagesOrThrow(messages);
+
   // Check quota
   const quota = await checkQuota(userId);
   if (!quota.allowed) {
@@ -311,6 +346,8 @@ export async function chatWithToolsStream({
   promptVariant = null,
   signal = null
 }) {
+  validateMessagesOrThrow(messages);
+
   const t0 = Date.now();
 
   // Check quota
@@ -504,3 +541,8 @@ export async function embed({ userId, texts }) {
     dimensions: openaiProvider.EMBEDDING_DIMENSIONS
   };
 }
+
+export const __private = {
+  validateMessagesOrThrow,
+  getAttachmentValidationMode,
+};

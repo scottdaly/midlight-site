@@ -8,6 +8,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { incrementGuardrailMetric } from '../services/llm/guardrailMetrics.js';
 
 /**
  * Custom application error class for operational errors
@@ -79,6 +80,11 @@ export function errorHandler(err, req, res, next) {
     code = 'PAYLOAD_TOO_LARGE';
     message = 'Request payload too large. Try fewer images or smaller files.';
     err.isOperational = true;
+    // Route-level LLM handlers increment this metric for known 413 responses.
+    // Parser-level 413 errors bypass those handlers and are captured here.
+    if (typeof req?.path === 'string' && req.path.startsWith('/api/llm')) {
+      incrementGuardrailMetric('payloadRejectHttp');
+    }
   }
 
   // Log error with context

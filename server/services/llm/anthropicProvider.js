@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { extractTextFromDocx } from '../docxExtractor.js';
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
@@ -46,7 +47,7 @@ const MODEL_ID_MAP = {
 const THINKING_MODELS = new Set(['claude-sonnet-4-5-thinking']);
 
 // Convert OpenAI-style messages to Anthropic format
-function convertMessages(messages) {
+async function convertMessages(messages) {
   let systemMessage = '';
   const anthropicMessages = [];
 
@@ -91,23 +92,32 @@ function convertMessages(messages) {
       });
     } else if (Array.isArray(msg.content)) {
       // Multimodal message (vision/documents) — convert to Anthropic format
-      anthropicMessages.push({
-        role: 'user',
-        content: msg.content.map(part => {
-          if (part.type === 'image') {
-            return {
-              type: 'image',
-              source: { type: 'base64', media_type: part.mediaType, data: part.data }
-            };
-          }
-          if (part.type === 'document') {
-            return {
+      const convertedParts = [];
+      for (const part of msg.content) {
+        if (part.type === 'image') {
+          convertedParts.push({
+            type: 'image',
+            source: { type: 'base64', media_type: part.mediaType, data: part.data }
+          });
+        } else if (part.type === 'document') {
+          if (part.mediaType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const text = await extractTextFromDocx(part.data, part.name);
+            convertedParts.push({ type: 'text', text });
+          } else {
+            convertedParts.push({
               type: 'document',
               source: { type: 'base64', media_type: part.mediaType, data: part.data }
-            };
+            });
           }
-          return { type: 'text', text: part.text };
-        })
+        } else if (part.type === 'text_file') {
+          convertedParts.push({ type: 'text', text: `[File: ${part.name}]\n\n${part.text}` });
+        } else {
+          convertedParts.push({ type: 'text', text: part.text });
+        }
+      }
+      anthropicMessages.push({
+        role: 'user',
+        content: convertedParts
       });
     } else {
       // User messages
@@ -129,7 +139,7 @@ export async function chat({
   stream = false,
   signal = null
 }) {
-  const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const { systemMessage, messages: anthropicMessages } = await convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
   const isThinking = THINKING_MODELS.has(model);
 
@@ -239,7 +249,7 @@ export async function chatWithTools({
   maxTokens = 4096,
   webSearchEnabled = false  // Ignored - search handled by Tavily service
 }) {
-  const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const { systemMessage, messages: anthropicMessages } = await convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
   const isThinking = THINKING_MODELS.has(model);
 
@@ -313,7 +323,7 @@ export async function* chatWithToolsStream({
   webSearchEnabled = false,
   signal = null
 }) {
-  const { systemMessage, messages: anthropicMessages } = convertMessages(messages);
+  const { systemMessage, messages: anthropicMessages } = await convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
   const isThinking = THINKING_MODELS.has(model);
 
@@ -491,3 +501,7 @@ export async function* chatWithToolsStream({
 export function isConfigured() {
   return !!process.env.ANTHROPIC_API_KEY;
 }
+
+export const __private = {
+  convertMessages,
+};

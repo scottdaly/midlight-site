@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { extractTextFromDocx } from '../docxExtractor.js';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
@@ -55,7 +56,7 @@ const THINKING_CONFIG = {
 };
 
 // Convert OpenAI-style messages to Gemini format
-function convertMessages(messages) {
+async function convertMessages(messages) {
   let systemInstruction = '';
   const geminiContents = [];
 
@@ -107,18 +108,27 @@ function convertMessages(messages) {
       });
     } else if (Array.isArray(msg.content)) {
       // Multimodal message (vision/documents) — convert to Gemini format
+      const convertedParts = [];
+      for (const part of msg.content) {
+        if (part.type === 'image') {
+          convertedParts.push({ inlineData: { mimeType: part.mediaType, data: part.data } });
+        } else if (part.type === 'document') {
+          if (part.mediaType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const text = await extractTextFromDocx(part.data, part.name);
+            convertedParts.push({ text });
+          } else {
+            // Gemini supports PDF natively via inlineData
+            convertedParts.push({ inlineData: { mimeType: part.mediaType, data: part.data } });
+          }
+        } else if (part.type === 'text_file') {
+          convertedParts.push({ text: `[File: ${part.name}]\n\n${part.text}` });
+        } else {
+          convertedParts.push({ text: part.text });
+        }
+      }
       geminiContents.push({
         role: 'user',
-        parts: msg.content.map(part => {
-          if (part.type === 'image') {
-            return { inlineData: { mimeType: part.mediaType, data: part.data } };
-          }
-          if (part.type === 'document') {
-            // Gemini supports PDF natively via inlineData
-            return { inlineData: { mimeType: part.mediaType, data: part.data } };
-          }
-          return { text: part.text };
-        })
+        parts: convertedParts
       });
     } else {
       // User messages
@@ -153,7 +163,7 @@ export async function chat({
   stream = false,
   signal = null
 }) {
-  const { systemInstruction, contents } = convertMessages(messages);
+  const { systemInstruction, contents } = await convertMessages(messages);
   const apiModel = MODEL_ID_MAP[model] || model;
   const thinkingCfg = THINKING_CONFIG[model];
 
@@ -274,7 +284,7 @@ export async function chatWithTools({
   maxTokens = 4096,
   webSearchEnabled = false  // Ignored - search handled by Tavily service
 }) {
-  const { systemInstruction, contents } = convertMessages(messages);
+  const { systemInstruction, contents } = await convertMessages(messages);
   const geminiTools = convertTools(tools);
   const apiModel = MODEL_ID_MAP[model] || model;
   const thinkingCfg = THINKING_CONFIG[model];
@@ -351,7 +361,7 @@ export async function* chatWithToolsStream({
   maxTokens = 4096,
   signal = null
 }) {
-  const { systemInstruction, contents } = convertMessages(messages);
+  const { systemInstruction, contents } = await convertMessages(messages);
   const geminiTools = convertTools(tools);
   const apiModel = MODEL_ID_MAP[model] || model;
   const thinkingCfg = THINKING_CONFIG[model];
@@ -436,3 +446,8 @@ export async function* chatWithToolsStream({
 export function isConfigured() {
   return !!process.env.GEMINI_API_KEY;
 }
+
+export const __private = {
+  convertMessages,
+  convertTools,
+};

@@ -1,7 +1,10 @@
 import OpenAI from 'openai';
 import { extractTextFromPdf } from '../pdfExtractor.js';
+import { extractTextFromDocx } from '../docxExtractor.js';
+import { CONFIG } from '../../config/index.js';
 
 let client = null;
+let pdfTextExtractor = extractTextFromPdf;
 
 function getClient() {
   if (client) {
@@ -15,6 +18,15 @@ function getClient() {
 
   client = new OpenAI({ apiKey });
   return client;
+}
+
+function getPdfExtractionOptions() {
+  const extraction = CONFIG.llm?.pdfExtraction || {};
+  return {
+    maxPdfBytes: extraction.maxPdfBytes,
+    maxPages: extraction.maxPages,
+    maxTextChars: extraction.maxTextChars,
+  };
 }
 
 // Model configuration - each model has its own tier
@@ -80,9 +92,16 @@ async function convertMessages(messages) {
             image_url: { url: `data:${part.mediaType};base64,${part.data}` }
           });
         } else if (part.type === 'document') {
-          // OpenAI doesn't support native PDF — extract text as fallback
-          const text = await extractTextFromPdf(part.data, part.name);
-          parts.push({ type: 'text', text });
+          if (part.mediaType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const text = await extractTextFromDocx(part.data, part.name);
+            parts.push({ type: 'text', text });
+          } else {
+            // OpenAI doesn't support native PDF — extract text as fallback
+            const text = await pdfTextExtractor(part.data, part.name, getPdfExtractionOptions());
+            parts.push({ type: 'text', text });
+          }
+        } else if (part.type === 'text_file') {
+          parts.push({ type: 'text', text: `[File: ${part.name}]\n\n${part.text}` });
         } else {
           parts.push({ type: 'text', text: part.text });
         }
@@ -374,6 +393,16 @@ export async function* chatWithToolsStream({
 export function isConfigured() {
   return !!process.env.OPENAI_API_KEY;
 }
+
+export const __private = {
+  convertMessages,
+  setPdfTextExtractorForTests(extractor) {
+    pdfTextExtractor = extractor;
+  },
+  resetPdfTextExtractorForTests() {
+    pdfTextExtractor = extractTextFromPdf;
+  },
+};
 
 // Embedding model configuration
 export const EMBEDDING_MODEL = 'text-embedding-3-small';

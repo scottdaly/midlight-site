@@ -12,12 +12,23 @@ import {
   getProviderStatus
 } from '../services/llm/index.js';
 import { checkQuota, getUsageStats, getRateLimit } from '../services/llm/quotaManager.js';
+import {
+  validateChatMessagesWithPolicy,
+  resolveAttachmentValidationMode,
+} from '../services/llm/attachmentValidation.js';
+import { incrementGuardrailMetric } from '../services/llm/guardrailMetrics.js';
+import CONFIG from '../config/index.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+const PAYLOAD_TOO_LARGE_MESSAGE = 'Request payload too large. Try fewer images or smaller files.';
 
 // Valid request types that clients can specify (prevents spoofing exempt types like 'classification'/'compaction')
 const VALID_REQUEST_TYPES = new Set(['chat', 'chat-with-tools', 'agent', 'inline-edit', 'workflow']);
+const REQUEST_TYPE_ALIASES = new Map([
+  ['inline_edit', 'inline-edit'],
+  ['chat_with_tools', 'chat-with-tools'],
+]);
 
 // All LLM routes require authentication
 router.use(requireAuth);
@@ -35,16 +46,133 @@ const llmRateLimiter = rateLimit({
 
 router.use(llmRateLimiter);
 
+function returnValidationErrorIfAny(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return false;
+
+  const list = errors.array();
+  const first = list[0];
+  const message = typeof first?.msg === 'string' ? first.msg : 'Invalid request';
+  res.status(400).json({
+    code: 'INVALID_REQUEST',
+    error: message,
+    message,
+    errors: list,
+  });
+  return true;
+}
+
+function returnKnownLlmErrorIfAny(res, error) {
+  if (error.code === 'INVALID_REQUEST') {
+    incrementGuardrailMetric('invalidRequestRejectHttp');
+    const message = error?.message || 'Invalid request';
+    logger.warn({ code: 'INVALID_REQUEST', message }, 'LLM request rejected');
+    res.status(400).json({
+      code: 'INVALID_REQUEST',
+      error: message,
+      message,
+    });
+    return true;
+  }
+
+  if (error.code === 'QUOTA_EXCEEDED') {
+    res.status(429).json({
+      code: 'QUOTA_EXCEEDED',
+      error: 'Monthly quota exceeded',
+      message: 'Monthly quota exceeded',
+      quota: error.quota,
+    });
+    return true;
+  }
+
+  if (error.code === 'PAYLOAD_TOO_LARGE') {
+    incrementGuardrailMetric('payloadRejectHttp');
+    logger.warn({ code: 'PAYLOAD_TOO_LARGE' }, 'LLM request rejected');
+    res.status(413).json({
+      code: 'PAYLOAD_TOO_LARGE',
+      error: PAYLOAD_TOO_LARGE_MESSAGE,
+      message: PAYLOAD_TOO_LARGE_MESSAGE,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function formatStreamErrorPayload(error, includeType = false) {
+  const base = includeType ? { type: 'error' } : {};
+
+  if (error.code === 'QUOTA_EXCEEDED') {
+    return {
+      ...base,
+      error: 'quota_exceeded',
+      quota: error.quota,
+    };
+  }
+
+  if (error.code === 'INVALID_REQUEST') {
+    incrementGuardrailMetric('invalidRequestRejectStream');
+    return {
+      ...base,
+      error: 'invalid_request',
+      message: error?.message || 'Invalid request',
+    };
+  }
+
+  if (error.code === 'PAYLOAD_TOO_LARGE') {
+    incrementGuardrailMetric('payloadRejectStream');
+    return {
+      ...base,
+      error: 'payload_too_large',
+      message: error?.message || PAYLOAD_TOO_LARGE_MESSAGE,
+    };
+  }
+
+  return {
+    ...base,
+    error: error?.message || String(error),
+  };
+}
+
+function writeStreamErrorAndEnd(res, error, includeType = false) {
+  if (error?.code === 'INVALID_REQUEST' || error?.code === 'PAYLOAD_TOO_LARGE') {
+    logger.warn({ code: error.code, stream: true }, 'LLM stream request rejected');
+  }
+  const streamError = formatStreamErrorPayload(error, includeType);
+  res.write(`data: ${JSON.stringify(streamError)}\n\n`);
+  res.end();
+}
+
+function normalizeRequestType(requestType) {
+  if (typeof requestType !== 'string') return 'chat';
+  const canonical = REQUEST_TYPE_ALIASES.get(requestType) || requestType;
+  return VALID_REQUEST_TYPES.has(canonical) ? canonical : 'chat';
+}
+
+function getAttachmentValidationMode() {
+  return resolveAttachmentValidationMode(CONFIG.llm?.guardrails);
+}
+
+function isAttachmentValidationEnabled() {
+  return getAttachmentValidationMode() !== 'off';
+}
+
+function isAttachmentValidationStrict() {
+  return getAttachmentValidationMode() === 'strict';
+}
+
 // Validation middleware
 const chatValidation = [
   body('provider').isIn(['openai', 'anthropic', 'gemini', 'kimi']).withMessage('Invalid provider'),
   body('model').notEmpty().withMessage('Model required'),
   body('messages').isArray({ min: 1 }).withMessage('Messages array required'),
   body('messages.*.role').isIn(['system', 'user', 'assistant', 'tool']).withMessage('Invalid message role'),
-  // Content can be a string or array (for multimodal/vision messages)
-  body('messages.*.content').custom((value) => {
-    if (typeof value === 'string' || Array.isArray(value) || value === null) return true;
-    throw new Error('Content must be string, array, or null');
+  body('messages').custom((messages) => {
+    if (!isAttachmentValidationStrict()) {
+      return true;
+    }
+    validateChatMessagesWithPolicy(messages, { mode: 'strict' });
+    return true;
   }),
   body('temperature').optional().isFloat({ min: 0, max: 2 }),
   body('maxTokens').optional().isInt({ min: 1, max: 32000 }),
@@ -54,9 +182,8 @@ const chatValidation = [
 // POST /api/llm/chat - Main chat endpoint
 router.post('/chat', chatValidation, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    if (returnValidationErrorIfAny(req, res)) {
+      return;
     }
 
     const {
@@ -74,7 +201,7 @@ router.post('/chat', chatValidation, async (req, res) => {
     } = req.body;
 
     // Validate requestType to prevent spoofing exempt billing types
-    const normalizedRequestType = VALID_REQUEST_TYPES.has(requestType) ? requestType : 'chat';
+    const normalizedRequestType = normalizeRequestType(requestType);
 
     // Check if model is allowed for user's tier
     const userTier = req.subscription?.tier || 'free';
@@ -140,12 +267,7 @@ router.post('/chat', chatValidation, async (req, res) => {
         if (abortController.signal.aborted) {
           return res.end();
         }
-        if (error.code === 'QUOTA_EXCEEDED') {
-          res.write(`data: ${JSON.stringify({ error: 'quota_exceeded', quota: error.quota })}\n\n`);
-        } else {
-          res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-        }
-        res.end();
+        writeStreamErrorAndEnd(res, error, false);
       }
     } else {
       // Non-streaming response
@@ -170,11 +292,8 @@ router.post('/chat', chatValidation, async (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'LLM chat error');
 
-    if (error.code === 'QUOTA_EXCEEDED') {
-      return res.status(429).json({
-        error: 'Monthly quota exceeded',
-        quota: error.quota
-      });
+    if (returnKnownLlmErrorIfAny(res, error)) {
+      return;
     }
 
     res.status(500).json({ error: 'Chat request failed' });
@@ -196,9 +315,8 @@ const workflowValidation = [
 // POST /api/llm/workflow - Convenience endpoint for workflow-style generations
 router.post('/workflow', workflowValidation, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    if (returnValidationErrorIfAny(req, res)) {
+      return;
     }
 
     const {
@@ -249,30 +367,28 @@ router.post('/workflow', workflowValidation, async (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'LLM workflow error');
 
-    if (error.code === 'QUOTA_EXCEEDED') {
-      return res.status(429).json({
-        error: 'Monthly quota exceeded',
-        quota: error.quota,
-      });
+    if (returnKnownLlmErrorIfAny(res, error)) {
+      return;
     }
 
     res.status(500).json({ error: 'Workflow request failed' });
   }
 });
 
-// POST /api/llm/chat-with-tools - Chat with function calling (streaming and non-streaming)
-router.post('/chat-with-tools', [
+const chatWithToolsValidation = [
   ...chatValidation,
   body('tools').isArray({ min: 1 }).withMessage('Tools array required'),
   body('tools.*.name').notEmpty().withMessage('Tool name required'),
   body('tools.*.description').notEmpty().withMessage('Tool description required'),
   body('tools.*.parameters').isObject().withMessage('Tool parameters required'),
   body('webSearchEnabled').optional().isBoolean()
-], async (req, res) => {
+];
+
+// POST /api/llm/chat-with-tools - Chat with function calling (streaming and non-streaming)
+router.post('/chat-with-tools', chatWithToolsValidation, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    if (returnValidationErrorIfAny(req, res)) {
+      return;
     }
 
     const {
@@ -367,12 +483,7 @@ router.post('/chat-with-tools', [
         if (abortController.signal.aborted) {
           return res.end();
         }
-        if (error.code === 'QUOTA_EXCEEDED') {
-          res.write(`data: ${JSON.stringify({ type: 'error', error: 'quota_exceeded', quota: error.quota })}\n\n`);
-        } else {
-          res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
-        }
-        res.end();
+        writeStreamErrorAndEnd(res, error, true);
       }
     } else {
       // Non-streaming response
@@ -396,11 +507,8 @@ router.post('/chat-with-tools', [
   } catch (error) {
     logger.error({ error: error?.message || error }, 'LLM tools error');
 
-    if (error.code === 'QUOTA_EXCEEDED') {
-      return res.status(429).json({
-        error: 'Monthly quota exceeded',
-        quota: error.quota
-      });
+    if (returnKnownLlmErrorIfAny(res, error)) {
+      return;
     }
 
     res.status(500).json({ error: 'Chat with tools failed' });
@@ -476,9 +584,8 @@ const embedValidation = [
 
 router.post('/embed', embedValidation, async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    if (returnValidationErrorIfAny(req, res)) {
+      return;
     }
 
     const { texts } = req.body;
@@ -492,11 +599,8 @@ router.post('/embed', embedValidation, async (req, res) => {
   } catch (error) {
     logger.error({ error: error?.message || error }, 'Embed error');
 
-    if (error.code === 'QUOTA_EXCEEDED') {
-      return res.status(429).json({
-        error: 'Monthly quota exceeded',
-        quota: error.quota
-      });
+    if (returnKnownLlmErrorIfAny(res, error)) {
+      return;
     }
 
     res.status(500).json({ error: 'Embedding request failed' });
@@ -692,3 +796,18 @@ router.post('/fetch-page', [
 });
 
 export default router;
+
+export const __private = {
+  chatValidation,
+  chatWithToolsValidation,
+  workflowValidation,
+  embedValidation,
+  returnValidationErrorIfAny,
+  returnKnownLlmErrorIfAny,
+  formatStreamErrorPayload,
+  writeStreamErrorAndEnd,
+  normalizeRequestType,
+  getAttachmentValidationMode,
+  isAttachmentValidationEnabled,
+  isAttachmentValidationStrict,
+};

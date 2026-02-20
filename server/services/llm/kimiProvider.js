@@ -1,5 +1,9 @@
 import OpenAI from 'openai';
 import { extractTextFromPdf } from '../pdfExtractor.js';
+import { extractTextFromDocx } from '../docxExtractor.js';
+import { CONFIG } from '../../config/index.js';
+
+let pdfTextExtractor = extractTextFromPdf;
 
 // Kimi K2.5 uses OpenAI-compatible API
 // Primary: NVIDIA (free tier)
@@ -48,6 +52,15 @@ const MODEL_ID_MAP = {
 // Models that should enable thinking mode
 const THINKING_MODELS = new Set(['kimi-k2.5-thinking']);
 
+function getPdfExtractionOptions() {
+  const extraction = CONFIG.llm?.pdfExtraction || {};
+  return {
+    maxPdfBytes: extraction.maxPdfBytes,
+    maxPages: extraction.maxPages,
+    maxTextChars: extraction.maxTextChars,
+  };
+}
+
 // Convert our message format to OpenAI format (Kimi is OpenAI-compatible)
 async function convertMessages(messages) {
   return Promise.all(messages.map(async msg => {
@@ -82,9 +95,16 @@ async function convertMessages(messages) {
             image_url: { url: `data:${part.mediaType};base64,${part.data}` }
           });
         } else if (part.type === 'document') {
-          // Kimi doesn't support native PDF — extract text as fallback
-          const text = await extractTextFromPdf(part.data, part.name);
-          parts.push({ type: 'text', text });
+          if (part.mediaType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const text = await extractTextFromDocx(part.data, part.name);
+            parts.push({ type: 'text', text });
+          } else {
+            // Kimi doesn't support native PDF — extract text as fallback
+            const text = await pdfTextExtractor(part.data, part.name, getPdfExtractionOptions());
+            parts.push({ type: 'text', text });
+          }
+        } else if (part.type === 'text_file') {
+          parts.push({ type: 'text', text: `[File: ${part.name}]\n\n${part.text}` });
         } else {
           parts.push({ type: 'text', text: part.text });
         }
@@ -525,3 +545,13 @@ export async function* chatWithToolsStream({
 export function isConfigured() {
   return !!(process.env.NVIDIA_API_KEY || process.env.KIMI_API_KEY);
 }
+
+export const __private = {
+  convertMessages,
+  setPdfTextExtractorForTests(extractor) {
+    pdfTextExtractor = extractor;
+  },
+  resetPdfTextExtractorForTests() {
+    pdfTextExtractor = extractTextFromPdf;
+  },
+};

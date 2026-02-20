@@ -46,6 +46,7 @@
     "helmet": "^8.1.0",
     "jsdom": "^28.0.0",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.11.0",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
     "openai": "^4.77.0",
