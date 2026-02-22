@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
+    "collab": "node server/collab-server.js",
+    "collab:dev": "nodemon server/collab-server.js",
     "test": "node --test server/__tests__/*.test.js",
     "maintenance:prune-mobile-devices": "node server/scripts/prune-mobile-devices.js",
     "maintenance:prune-mobile-devices:dry-run": "node server/scripts/prune-mobile-devices.js --dry-run",
