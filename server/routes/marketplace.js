@@ -1,11 +1,18 @@
 import { Router } from 'express';
 import { body, query, param, validationResult } from 'express-validator';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { logger } from '../utils/logger.js';
 import { requireAuth, optionalAuth, attachSubscription, requirePro } from '../middleware/auth.js';
 import * as marketplaceService from '../services/marketplaceService.js';
 
 const router = Router();
+
+function marketplaceLimiterKey(req) {
+  if (req.user?.id != null) {
+    return `marketplace:${req.user.id}`;
+  }
+  return `marketplace:${ipKeyGenerator(req.ip)}`;
+}
 
 // Rate limiter for marketplace write operations
 const marketplaceWriteLimiter = rateLimit({
@@ -14,7 +21,7 @@ const marketplaceWriteLimiter = rateLimit({
   message: { error: 'Too many marketplace requests, please slow down' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id?.toString() || req.ip,
+  keyGenerator: marketplaceLimiterKey,
 });
 
 // ============================================================================

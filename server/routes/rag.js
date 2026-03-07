@@ -5,7 +5,7 @@
  */
 
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { requireAuth, attachSubscription } from '../middleware/auth.js';
 import {
   indexProject,
@@ -17,6 +17,13 @@ import {
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+
+function ragLimiterKey(req) {
+  if (req.user?.id != null) {
+    return `rag:${req.user.id}`;
+  }
+  return `rag:${ipKeyGenerator(req.ip)}`;
+}
 
 // All routes require authentication
 router.use(requireAuth);
@@ -39,7 +46,7 @@ router.use((req, res, next) => {
 const ragRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
-  keyGenerator: (req) => `rag:${req.user?.id || req.ip}`,
+  keyGenerator: ragLimiterKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'RAG rate limit exceeded. Please slow down.' },
