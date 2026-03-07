@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { generateTestEmail, desktopHeaders } from './fixtures/auth';
-import { trackTestEmail } from './fixtures/cleanup';
+import { desktopHeaders } from './fixtures/auth';
+import { createFreeUser } from './fixtures/collab';
+
+const OPENAI_FREE_MODEL = 'gpt-5-mini';
+const ANTHROPIC_FREE_MODEL = 'claude-haiku-4-5-20251001';
 
 /**
  * LLM Proxy API E2E Tests
@@ -45,20 +48,8 @@ test.describe('LLM API - Request Validation', () => {
   let accessToken: string;
 
   test.beforeAll(async ({ request }) => {
-    // Create a test user
-    const email = generateTestEmail();
-    trackTestEmail(email);
-    const signupResponse = await request.post('/api/auth/signup', {
-      headers: desktopHeaders(),
-      data: {
-        email,
-        password: 'SecurePassword123!',
-        displayName: 'LLM Test User',
-      },
-    });
-
-    const body = await signupResponse.json();
-    accessToken = body.accessToken;
+    const user = await createFreeUser(request, 'LLM Test User');
+    accessToken = user.accessToken;
   });
 
   test('LLM endpoint requires messages array', async ({ request }) => {
@@ -89,6 +80,8 @@ test.describe('LLM API - Request Validation', () => {
     const response = await request.post('/api/llm/chat', {
       headers: desktopHeaders(accessToken),
       data: {
+        provider: 'openai',
+        model: OPENAI_FREE_MODEL,
         messages: [{ role: 'user', content: 'Say "test" and nothing else.' }],
         stream: false,
       },
@@ -102,30 +95,18 @@ test.describe('LLM API - Request Validation', () => {
 
 test.describe('LLM API - Quota', () => {
   test('user info includes quota information', async ({ request }) => {
-    // Create a test user
-    const email = generateTestEmail();
-    trackTestEmail(email);
-    const signupResponse = await request.post('/api/auth/signup', {
-      headers: desktopHeaders(),
-      data: {
-        email,
-        password: 'SecurePassword123!',
-        displayName: 'Quota Test User',
-      },
-    });
+    const user = await createFreeUser(request, 'Quota Test User');
 
-    const { accessToken } = await signupResponse.json();
-
-    // Get user info which should include subscription/quota details
-    const userResponse = await request.get('/api/user/me', {
-      headers: desktopHeaders(accessToken),
+    const userResponse = await request.get('/api/user/profile', {
+      headers: desktopHeaders(user.accessToken),
     });
 
     expect(userResponse.ok()).toBeTruthy();
 
-    const user = await userResponse.json();
-    // User should have subscription info
-    expect(user).toBeDefined();
+    const body = await userResponse.json();
+    expect(body.user).toBeDefined();
+    expect(body.subscription).toBeDefined();
+    expect(body.quota).toBeDefined();
   });
 });
 
@@ -136,19 +117,8 @@ test.describe('LLM API - Provider Support', () => {
   let accessToken: string;
 
   test.beforeAll(async ({ request }) => {
-    const email = generateTestEmail();
-    trackTestEmail(email);
-    const signupResponse = await request.post('/api/auth/signup', {
-      headers: desktopHeaders(),
-      data: {
-        email,
-        password: 'SecurePassword123!',
-        displayName: 'Provider Test User',
-      },
-    });
-
-    const body = await signupResponse.json();
-    accessToken = body.accessToken;
+    const user = await createFreeUser(request, 'Provider Test User');
+    accessToken = user.accessToken;
   });
 
   test('can specify Anthropic as provider', async ({ request }) => {
@@ -157,6 +127,7 @@ test.describe('LLM API - Provider Support', () => {
       data: {
         messages: [{ role: 'user', content: 'Hi' }],
         provider: 'anthropic',
+        model: ANTHROPIC_FREE_MODEL,
         stream: false,
       },
     });
@@ -171,6 +142,7 @@ test.describe('LLM API - Provider Support', () => {
       data: {
         messages: [{ role: 'user', content: 'Hi' }],
         provider: 'openai',
+        model: OPENAI_FREE_MODEL,
         stream: false,
       },
     });
@@ -185,6 +157,7 @@ test.describe('LLM API - Provider Support', () => {
       data: {
         messages: [{ role: 'user', content: 'Hi' }],
         provider: 'invalid-provider',
+        model: OPENAI_FREE_MODEL,
         stream: false,
       },
     });

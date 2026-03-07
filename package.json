@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
+    "server:dev": "node server/index.js",
     "dev": "nodemon server/index.js",
     "collab": "node server/collab-server.js",
     "collab:dev": "nodemon server/collab-server.js",

@@ -75,7 +75,7 @@ export async function getUserId(request: APIRequestContext, token: string): Prom
   const res = await request.get('/api/user/me', { headers: desktopHeaders(token) });
   if (!res.ok()) throw new Error(`getUserId failed: ${res.status()}`);
   const body = await res.json();
-  return body.id;
+  return body.user.id;
 }
 
 /** Create a user with Pro subscription */

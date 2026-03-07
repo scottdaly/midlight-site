@@ -14,10 +14,14 @@ import {
  * Tests team CRUD, membership, document management, and access control.
  */
 
+function uniqueTeamName(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 test.describe('Teams - Creation', () => {
   test('premium user can create a team', async ({ request }) => {
     const user = await createPremiumUser(request, 'Team Creator');
-    const teamName = `QA Team ${Date.now()}`;
+    const teamName = uniqueTeamName('QA Team');
 
     const res = await request.post('/api/teams', {
       headers: desktopHeaders(user.accessToken),
@@ -52,7 +56,7 @@ test.describe('Teams - Creation', () => {
 
   test('duplicate team name returns 409', async ({ request }) => {
     const user = await createPremiumUser(request, 'Dup Team User');
-    const teamName = `Unique Team ${Date.now()}`;
+    const teamName = uniqueTeamName('Unique Team');
 
     await request.post('/api/teams', {
       headers: desktopHeaders(user.accessToken),
@@ -75,7 +79,7 @@ test.describe('Teams - Membership', () => {
     owner = await createPremiumUser(request, 'Team Owner');
     const res = await request.post('/api/teams', {
       headers: desktopHeaders(owner.accessToken),
-      data: { name: `Team-${Date.now()}` },
+      data: { name: uniqueTeamName('Team') },
     });
     teamId = (await res.json()).team.id;
   });
@@ -199,7 +203,7 @@ test.describe('Teams - Documents', () => {
     owner = await createPremiumUser(request, 'Doc Team Owner');
     const res = await request.post('/api/teams', {
       headers: desktopHeaders(owner.accessToken),
-      data: { name: `DocTeam-${Date.now()}` },
+      data: { name: uniqueTeamName('DocTeam') },
     });
     teamId = (await res.json()).team.id;
   });
@@ -250,7 +254,7 @@ test.describe('Teams - Update & Delete', () => {
     owner = await createPremiumUser(request, 'Update Team Owner');
     const res = await request.post('/api/teams', {
       headers: desktopHeaders(owner.accessToken),
-      data: { name: `UpdTeam-${Date.now()}` },
+      data: { name: uniqueTeamName('UpdTeam') },
     });
     teamId = (await res.json()).team.id;
   });
